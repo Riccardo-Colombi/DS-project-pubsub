@@ -1,4 +1,4 @@
-package it.polimi.pubsub.broker.state;
+package it.polimi.pubsub.broker.components;
 
 import it.polimi.pubsub.message.Message;
 

@@ -1,4 +1,4 @@
-package it.polimi.pubsub.broker.state;
+package it.polimi.pubsub.broker.components;
 
 public enum ClientStatus {
     CONNECTED,
