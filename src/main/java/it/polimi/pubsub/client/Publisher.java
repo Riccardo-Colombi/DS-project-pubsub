@@ -1,5 +1,5 @@
 package it.polimi.pubsub.client;
 
-public class Publisher {
-    // TODO
+public interface Publisher {
+    public void publish(String topic, byte[] payload);
 }
