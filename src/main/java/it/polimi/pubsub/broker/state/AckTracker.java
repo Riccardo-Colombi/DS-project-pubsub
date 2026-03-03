@@ -1,6 +1,6 @@
 package it.polimi.pubsub.broker.state;
 
-import it.polimi.pubsub.message.Message;
+import it.polimi.pubsub.messages.Message;
 
 import java.util.List;
 import java.util.Set;

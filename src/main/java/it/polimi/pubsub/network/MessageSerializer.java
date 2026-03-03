@@ -1,7 +1,7 @@
 package it.polimi.pubsub.network;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import it.polimi.pubsub.message.Message;
+import it.polimi.pubsub.messages.Message;
 
 /**
  * Handles the conversion between Java Message objects and JSON byte arrays for network transmission.

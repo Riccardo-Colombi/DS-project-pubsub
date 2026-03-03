@@ -1,4 +1,4 @@
-package it.polimi.pubsub.message;
+package it.polimi.pubsub.messages;
 
 public enum MessageType {
     PUBLISH,
