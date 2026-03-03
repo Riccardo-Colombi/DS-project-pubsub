@@ -14,11 +14,11 @@ public class MessageSerializer {
         this.mapper = new ObjectMapper();
     }
 
-    public byte[] serialize(Message message) throws Exception {
-        return mapper.writeValueAsBytes(message);
+    public String serialize(Message message) throws Exception {
+        return mapper.writeValueAsString(message);
     }
 
-    public Message deserialize(byte[] data) throws Exception {
+    public Message deserialize(String data) throws Exception {
         return mapper.readValue(data, Message.class);
     }
 }

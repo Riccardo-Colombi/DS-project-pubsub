@@ -1,14 +1,13 @@
 package it.polimi.pubsub.broker.state;
 
+import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-// Broker problem: since multiple network threads are reading/writing things to the structure in the broker simultaneously, thread safety is a concern.
-// I've read that it's better to not use a HashMap (problem of ConcurrentModificationException) but use java.util.concurrent
-// Also read that the normal Set inside it's not that great for thread safety. Use the function ConcurrentHashMap.newKeySet()
-
 public class RoutingTable {
 
+    // Do not use HashMap for multiple network threads reading/writing things to the structure. Risk of ConcurrentModificationException.
+    // Use java.util.concurrent and in particular ConcurrentHashMap.newKeySet()
     private final ConcurrentHashMap<String, Set<String>> topicSubscribers;
 
     public RoutingTable() {
@@ -21,11 +20,24 @@ public class RoutingTable {
     }
 
     public void removeSubscription(String topic, String subscriberId) {
-        // TODO
+        Set<String> subscribers = topicSubscribers.get(topic);
+        if (subscribers != null) {
+            subscribers.remove(subscriberId);
+
+            if (subscribers.isEmpty()) {
+                topicSubscribers.remove(topic, subscribers);
+            }
+        }
     }
 
     public Set<String> getSubscribers(String topic) {
-        // TODO
-        return Set.of();
+        Set<String> subscribers = topicSubscribers.get(topic);
+
+        // If there are no subscribers to a topic we can return a null, causing a NullPointerException risk
+        if (subscribers == null) {
+            return Collections.emptySet();
+        }
+        // Collections.unmodifiableSet() to not modify the set. Otherwise we are passing the actual set
+        return Collections.unmodifiableSet(subscribers);
     }
 }

@@ -1,8 +1,50 @@
 package it.polimi.pubsub.broker.state;
 
-// This is a Wrapper Object that will hold ClientStatus and will reference a TCP connection.
-// This class will be used in the ClientRegistry to "keep track" of all the connections
+import it.polimi.pubsub.message.Message;
+import it.polimi.pubsub.network.TcpConnection;
 
 public class ClientSession {
+
+    private final String clientId;
+    // So other threads can see this
+    private volatile ClientStatus status;
+    private TcpConnection connection;
+
+    public ClientSession(String clientId, TcpConnection connection) {
+        this.clientId = clientId;
+        this.connection = connection;
+        this.status = ClientStatus.CONNECTED;
+    }
+
+    public String getClientId() {
+        return clientId;
+    }
+
+    public ClientStatus getStatus() {
+        return status;
+    }
+
+    public synchronized void setStatus(ClientStatus status) {
+        this.status = status;
+    }
+
+    public synchronized TcpConnection getConnection() {
+        return connection;
+    }
+
+    // Used by the broker when a client crash and try to re-connect with a new java.net.Socket
+    public synchronized void updateConnection(TcpConnection newConnection) {
+        this.connection = newConnection;
+        this.status = ClientStatus.CONNECTED;
+    }
+
+    // Used by the broker as a safety measure. This ensure the broker to not send data over a disconnected socket
+    public synchronized void sendMessage(Message message) throws Exception {
+        if (status == ClientStatus.CONNECTED && connection != null) {
+            connection.send(message);
+        } else {
+            throw new IllegalStateException("Client is currently disconnected: " + clientId);
+        }
+    }
 
 }
