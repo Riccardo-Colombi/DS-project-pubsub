@@ -3,6 +3,10 @@ package it.polimi.pubsub.broker.state;
 import it.polimi.pubsub.message.Message;
 import it.polimi.pubsub.network.TcpConnection;
 
+/**
+ * - E' più dispendioso tenere aperta una connessione TCP permanente o continuare ad aprirla e chiuderla?
+ */
+
 public class ClientSession {
 
     private final String clientId;
