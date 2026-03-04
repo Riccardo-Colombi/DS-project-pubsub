@@ -18,7 +18,9 @@ public class SubscribeMessage extends Message {
         this.topic = topic;
     }
 
-    public String getTopic() { return topic; }
+    public String getTopic() {
+        return topic;
+    }
 
     @Override
     public MessageType getType() {
