@@ -11,7 +11,7 @@ import java.util.List;
  * TODO
  * - How to empty the WAL?
  *      Checkpointing or snapshots: instead of emptying the WAL operation per operation, you stop accepting new
- *      messages and create a snapshot by tanking the RoutingTable and AckTracker and put in a snapshot.json file.
+ *      messages and create a snapshot by tanking the TopicSubscribersTable and AckTracker and put in a snapshot.json file.
  *      Then rename it in wal.json.
  * - When to do it?
  *      Sized based: do this every time the file wal.json exceed 10MB in size.

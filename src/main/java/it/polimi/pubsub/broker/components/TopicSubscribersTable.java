@@ -4,13 +4,13 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class RoutingTable {
+public class TopicSubscribersTable {
 
     // Do not use HashMap for multiple network threads reading/writing things to the structure. Risk of ConcurrentModificationException.
     // Use java.util.concurrent and in particular ConcurrentHashMap.newKeySet()
     private final ConcurrentHashMap<String, Set<String>> topicSubscribers;
 
-    public RoutingTable() {
+    public TopicSubscribersTable() {
         this.topicSubscribers = new ConcurrentHashMap<>();
     }
 

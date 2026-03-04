@@ -2,15 +2,12 @@ package it.polimi.pubsub.broker;
 
 import it.polimi.pubsub.broker.components.*;
 import it.polimi.pubsub.broker.storage.WriteAheadLog;
-import it.polimi.pubsub.messages.AckMessage;
-import it.polimi.pubsub.messages.Message;
-import it.polimi.pubsub.messages.PublishMessage;
-import it.polimi.pubsub.messages.SubscribeMessage;
+import it.polimi.pubsub.messages.*;
 import it.polimi.pubsub.network.TcpConnection;
 
 public class Broker {
 
-    private final RoutingTable routingTable;
+    private final TopicSubscribersTable topicSubscribersTable;
     private final ClientRegistry clientRegistry;
     private final AckTracker ackTracker;
     private final WriteAheadLog wal;
@@ -18,7 +15,7 @@ public class Broker {
     private long brokerCounter;
 
     public Broker(String walFilePath) throws Exception {
-        this.routingTable = new RoutingTable();
+        this.topicSubscribersTable = new TopicSubscribersTable();
         this.clientRegistry = new ClientRegistry();
         this.ackTracker = new AckTracker();
         this.wal = new WriteAheadLog(walFilePath);
@@ -35,6 +32,7 @@ public class Broker {
 
     public void onMessageReceived(Message message, TcpConnection connection) throws Exception {
         if (connection != null) {
+            // TODO: check if HEARTBEAT
             wal.append(message);
         }
         dispatchMessage(message, connection);
@@ -69,7 +67,7 @@ public class Broker {
             clientRegistry.registerClient(clientId, connection);
         }
 
-        routingTable.addSubscription(msg.getTopic(), clientId);
+        topicSubscribersTable.addSubscription(msg.getTopic(), clientId);
 
         if (connection != null) {
             long brokerSeqNum = ++this.brokerCounter;
@@ -83,7 +81,7 @@ public class Broker {
 
     private void handlePublish(PublishMessage msg, TcpConnection connection) throws Exception {
         String topic = msg.getTopic();
-        java.util.Set<String> interestedClients = routingTable.getSubscribers(topic);
+        java.util.Set<String> interestedClients = topicSubscribersTable.getSubscribers(topic);
 
         if (!interestedClients.isEmpty()) {
             ackTracker.trackDelivery(msg, interestedClients);
