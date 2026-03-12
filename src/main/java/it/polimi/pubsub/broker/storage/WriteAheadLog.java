@@ -49,15 +49,25 @@ public class WriteAheadLog {
         writer.flush();
     }
 
+    // TODO Modify this method for snapshot implementation
+
     public List<Message> recover() throws Exception {
         List<Message> recoveredMessages = new ArrayList<>();
 
         try(BufferedReader reader = new BufferedReader(new FileReader(logFile))) {
             String line;
             while((line = reader.readLine()) != null) {
-                if(!line.trim().isEmpty()) {
-                    Message msg = serializer.deserialize(line);
-                    recoveredMessages.add(msg);
+                String trimmedLine = line.trim();
+                if(!trimmedLine.isEmpty()) {
+                    try {
+                        // If line is corrupted, e.g. crash while writing, serializer should throw an exception
+                        // TODO it really throws an exception???
+                        Message msg = serializer.deserialize(trimmedLine);
+                        recoveredMessages.add(msg);
+                    } catch (Exception e) {
+                        // Do nothing, it means the message was not acknowledged
+                        System.err.println("Corrupted line ... skipping : " + trimmedLine);
+                    }
                 }
             }
         }
@@ -69,4 +79,8 @@ public class WriteAheadLog {
             writer.close();
         }
     }
+
+    // TODO Snapshot managing methods
+    // they are called by the broker when the conditions are met
+
 }
