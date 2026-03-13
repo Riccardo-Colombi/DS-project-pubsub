@@ -50,6 +50,7 @@ public class WriteAheadLog {
     }
 
     // TODO Modify this method for snapshot implementation
+    // Not necessary
 
     public List<Message> recover() throws Exception {
         List<Message> recoveredMessages = new ArrayList<>();
@@ -65,7 +66,7 @@ public class WriteAheadLog {
                         Message msg = serializer.deserialize(trimmedLine);
                         recoveredMessages.add(msg);
                     } catch (Exception e) {
-                        // Do nothing, it means the message was not acknowledged
+                        // Do nothing, it means the message was not acknowledged and it will be resent
                         System.err.println("Corrupted line ... skipping : " + trimmedLine);
                     }
                 }
@@ -82,5 +83,41 @@ public class WriteAheadLog {
 
     // TODO Snapshot managing methods
     // they are called by the broker when the conditions are met
+
+    // TODO Distributed Snapshot
+
+    public synchronized void snapshot(List<Message> consolidatedState) throws Exception {
+        File tempFile = new File(logFile.getAbsolutePath() + ".tmp");
+
+        try (BufferedWriter tempWriter = new BufferedWriter(new FileWriter(tempFile))) {
+            for (Message msg : consolidatedState) {
+                tempWriter.write(serializer.serialize(msg));
+                tempWriter.newLine();
+            }
+            tempWriter.flush();
+        } catch (Exception e) {
+            if (tempFile.exists()) tempFile.delete();
+            throw e;
+        }
+
+        this.close();
+        boolean success = tempFile.renameTo(logFile);
+
+        try {
+            this.writer = new BufferedWriter(new FileWriter(logFile, true));
+        } catch (IOException e) {
+            throw new IOException("fatal error, not able to open wal", e);
+        }
+
+        if (!success) {
+            if (tempFile.exists()) tempFile.delete();
+            throw new IOException("failed snapshot, keep using old WAL");
+        }
+    }
+
+    // To check dimensions of the WAL
+    public long getSize() {
+        return logFile.length();
+    }
 
 }

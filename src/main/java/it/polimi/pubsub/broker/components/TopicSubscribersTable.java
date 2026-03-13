@@ -40,4 +40,8 @@ public class TopicSubscribersTable {
         // Collections.unmodifiableSet() to not modify the set. Otherwise we are passing the actual set
         return Collections.unmodifiableSet(subscribers);
     }
+
+    public Set<String> getTopics() {
+        return topicSubscribers.keySet();
+    }
 }

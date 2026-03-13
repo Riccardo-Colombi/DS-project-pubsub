@@ -5,6 +5,8 @@ import it.polimi.pubsub.broker.storage.WriteAheadLog;
 import it.polimi.pubsub.messages.*;
 import it.polimi.pubsub.network.TcpConnection;
 
+import java.util.List;
+
 public class Broker {
 
     private final TopicSubscribersTable topicSubscribersTable;
@@ -24,7 +26,14 @@ public class Broker {
     }
 
     private void recoverState() throws Exception {
+
+        // Updating brokerCounter during the recovery
+        List<Message> history = wal.recover();
+
         for (Message msg : wal.recover()) {
+            if (msg.getSequenceNumber() > this.brokerCounter) {
+                this.brokerCounter = msg.getSequenceNumber();
+            }
             // Replay the historical messages to rebuild RAM state
             dispatchMessage(msg, null);
         }
@@ -34,6 +43,13 @@ public class Broker {
         if (connection != null) {
             // TODO: check if HEARTBEAT
             wal.append(message);
+
+            // If dim(wal) > 10MB -> take snapshot
+
+            if (wal.getSize() > 10 * 1024 * 1024) {
+                System.out.println("Starting snapshot");
+                takeSnapshot();
+            }
         }
         dispatchMessage(message, connection);
     }
@@ -103,5 +119,29 @@ public class Broker {
 
             connection.send(ack);
         }
+    }
+
+    private synchronized void takeSnapshot() throws Exception {
+        List<Message> snapshotState = new java.util.ArrayList<>();
+        long currentTime = System.currentTimeMillis();
+
+        for (String topic : topicSubscribersTable.getTopics()) {
+            for (String clientId : topicSubscribersTable.getSubscribers(topic)) {
+                SubscribeMessage subMsg = new SubscribeMessage(
+                        clientId,
+                        0,
+                        currentTime,
+                        topic
+                );
+                snapshotState.add(subMsg);
+            }
+        }
+
+        for (PendingMessage pending : ackTracker.getPendingMessages()) {
+            snapshotState.add(pending.getMessage());
+        }
+
+        wal.snapshot(snapshotState);
+        System.out.println("Snapshot completato: " + snapshotState.size() + " elementi salvati.");
     }
 }
