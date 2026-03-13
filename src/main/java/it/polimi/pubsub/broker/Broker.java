@@ -7,6 +7,10 @@ import it.polimi.pubsub.network.TcpConnection;
 
 import java.util.List;
 
+// TODO Update this to be coherent with Raft
+// State machine for roles LEADER, FOLLOWER, CANDIDATE
+// Add random timout for leader election
+
 public class Broker {
 
     private final TopicSubscribersTable topicSubscribersTable;
@@ -44,9 +48,9 @@ public class Broker {
             // TODO: check if HEARTBEAT
             wal.append(message);
 
-            // If dim(wal) > 10MB -> take snapshot
+            // If dim(wal) > 10kB -> take snapshot
 
-            if (wal.getSize() > 10 * 1024 * 1024) {
+            if (wal.getSize() > 10 * 1024) {
                 System.out.println("Starting snapshot");
                 takeSnapshot();
             }
@@ -125,6 +129,8 @@ public class Broker {
         List<Message> snapshotState = new java.util.ArrayList<>();
         long currentTime = System.currentTimeMillis();
 
+        // Saving Subscribe Table
+
         for (String topic : topicSubscribersTable.getTopics()) {
             for (String clientId : topicSubscribersTable.getSubscribers(topic)) {
                 SubscribeMessage subMsg = new SubscribeMessage(
@@ -137,11 +143,12 @@ public class Broker {
             }
         }
 
+        // Saving Pending Messages
+
         for (PendingMessage pending : ackTracker.getPendingMessages()) {
             snapshotState.add(pending.getMessage());
         }
 
         wal.snapshot(snapshotState);
-        System.out.println("Snapshot completato: " + snapshotState.size() + " elementi salvati.");
     }
 }

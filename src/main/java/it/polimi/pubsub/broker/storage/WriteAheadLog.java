@@ -23,6 +23,8 @@ import java.util.List;
 // I decided to create a WAL file to save the state of a broker and append messages everytime instead of modifying it
 // every time there's a "new thing" or there is a "deletion operation".
 
+    // TODO Update this to be coherent with Raft
+
 public class WriteAheadLog {
 
     private final File logFile;
