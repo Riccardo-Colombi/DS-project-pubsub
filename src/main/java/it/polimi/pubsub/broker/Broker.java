@@ -17,6 +17,7 @@ public class Broker {
     private final ClientRegistry clientRegistry;
     private final AckTracker ackTracker;
     private final WriteAheadLog wal;
+    private final BrokerRole role;
 
     private long brokerCounter;
 
@@ -26,13 +27,12 @@ public class Broker {
         this.ackTracker = new AckTracker();
         this.wal = new WriteAheadLog(walFilePath);
 
+        this.role = BrokerRole.FOLLOWER;
+
         recoverState();
     }
 
     private void recoverState() throws Exception {
-
-        // Updating brokerCounter during the recovery
-        List<Message> history = wal.recover();
 
         for (Message msg : wal.recover()) {
             if (msg.getSequenceNumber() > this.brokerCounter) {
@@ -41,6 +41,9 @@ public class Broker {
             // Replay the historical messages to rebuild RAM state
             dispatchMessage(msg, null);
         }
+
+        // TODO: handle pending messages
+        // Partial solution on Boglio's notes
     }
 
     public void onMessageReceived(Message message, TcpConnection connection) throws Exception {
