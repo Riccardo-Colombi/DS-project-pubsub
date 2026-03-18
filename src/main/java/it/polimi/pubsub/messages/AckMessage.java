@@ -26,7 +26,7 @@ public class AckMessage extends Message {
 
     @Override
     public MessageType getType() {
-        return MessageType.SUBSCRIBE;
+        return MessageType.ACK;
     }
 
     public String getAcknowledgedMessageId() {

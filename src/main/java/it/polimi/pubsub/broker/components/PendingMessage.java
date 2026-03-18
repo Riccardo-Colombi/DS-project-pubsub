@@ -8,12 +8,12 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PendingMessage {
 
     private final Message message;
-    private final long timestamp;
+    private volatile long trackingTimestamp;
     private final Set<String> pendingSubscribers;
 
     public PendingMessage(Message message, Set<String> targetSubscribers) {
         this.message = message;
-        this.timestamp = System.currentTimeMillis();
+        this.trackingTimestamp = System.currentTimeMillis();
         this.pendingSubscribers = ConcurrentHashMap.newKeySet();
         this.pendingSubscribers.addAll(targetSubscribers);
     }
@@ -26,6 +26,10 @@ public class PendingMessage {
         return pendingSubscribers.isEmpty();
     }
 
+    public void resetTimestamp() {
+        trackingTimestamp = System.currentTimeMillis();
+    }
+
     public Set<String> getPendingSubscribers() {
         return pendingSubscribers;
     }
@@ -34,7 +38,7 @@ public class PendingMessage {
         return message;
     }
 
-    public long getTimestamp() {
-        return timestamp;
+    public long getTrackingTimestamp() {
+        return trackingTimestamp;
     }
 }

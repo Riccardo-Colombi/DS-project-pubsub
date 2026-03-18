@@ -1,8 +1,10 @@
 package it.polimi.pubsub.network;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import it.polimi.pubsub.messages.Message;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
@@ -30,7 +32,7 @@ public class TcpConnection {
         writer.println(jsonPayload);
     }
 
-    public Message receive() throws Exception {
+    public Message receive() throws IOException, JsonProcessingException {
         String jsonPayload = reader.readLine();
 
         // Socket closed by the other side
@@ -41,7 +43,7 @@ public class TcpConnection {
         return serializer.deserialize(jsonPayload);
     }
 
-    public void close() throws Exception {
+    public void close() throws IOException {
         socket.close();
     }
 }
