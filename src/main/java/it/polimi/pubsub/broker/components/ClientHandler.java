@@ -9,7 +9,7 @@ import java.io.IOException;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ClientHandler implements Runnable {
+public class ClientHandler {
 
     private final TcpConnection connection;
     private final Broker broker;
@@ -29,8 +29,7 @@ public class ClientHandler implements Runnable {
         this.disconnected = new AtomicBoolean(false);
     }
 
-    @Override
-    public void run() {
+    public void start() {
         readerTask = executor.submit(this::readLoop);
         writerTask = executor.submit(this::writeLoop);
     }
@@ -52,7 +51,7 @@ public class ClientHandler implements Runnable {
                     broker.addClientToRegistry(clientId, this);
                 }
 
-                broker.onMessageReceived(msg, connection);
+                broker.onMessageReceived(msg);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

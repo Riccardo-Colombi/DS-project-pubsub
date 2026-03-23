@@ -1,9 +1,12 @@
 package it.polimi.pubsub.client;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import it.polimi.pubsub.messages.*;
 import it.polimi.pubsub.network.TcpConnection;
 
+import java.io.IOException;
 import java.net.Socket;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -19,9 +22,10 @@ public class Client implements Publisher, Subscriber {
     private final int brokerPort;
 
     private TcpConnection connection;
-    private final ExecutorService executor;
-    private final ScheduledExecutorService scheduler;
+    private ExecutorService executor;
+    private ScheduledExecutorService scheduler;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean disconnected = new AtomicBoolean(false);
     private final AtomicLong sequenceCounter = new AtomicLong(0);
 
     private final BlockingQueue<Message> outQueue = new LinkedBlockingQueue<>();
@@ -33,14 +37,18 @@ public class Client implements Publisher, Subscriber {
         this.clientId = clientId;
         this.brokerHost = brokerHost;
         this.brokerPort = brokerPort;
-        this.executor = Executors.newCachedThreadPool();
-        this.scheduler = Executors.newScheduledThreadPool(2);
     }
 
     public void connect() throws Exception {
         Socket socket = new Socket(brokerHost, brokerPort);
         this.connection = new TcpConnection(socket);
+
+        disconnected.set(false);
         running.set(true);
+
+        // once is interrupted using .shutdownNow(); i have to recreate the object to reuse it
+        this.executor = Executors.newCachedThreadPool();
+        this.scheduler = Executors.newScheduledThreadPool(2);
 
         executor.submit(this::readLoop);
         executor.submit(this::writeLoop);
@@ -75,10 +83,18 @@ public class Client implements Publisher, Subscriber {
 
                 handleMessage(msg);
             }
+        }  catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.out.println("Thread interrupted: " + e.getMessage());
+        }  catch (JsonProcessingException e) {
+            System.out.println("Deserialization error: " + e.getMessage());
+        } catch (IOException e) {
+            System.out.println("Connection lost: " + e.getMessage());
         } catch (Exception e) {
-            System.out.println("Read error: " + e.getMessage());
+            System.out.println("Generic error: " + e.getMessage());
         } finally {
-            disconnect();
+            if (disconnected.compareAndSet(false, true))
+                disconnect();
         }
     }
 
@@ -93,38 +109,35 @@ public class Client implements Publisher, Subscriber {
         } catch (Exception e) {
             System.out.println("Write error: " + e.getMessage());
         } finally {
-            drainQueue();
-            // todo implement disconnection
+            if (disconnected.compareAndSet(false, true))
+                disconnect();
         }
     }
 
     private void startHeartbeat() {
-        scheduler.scheduleAtFixedRate(this::sendHeartbeat, 0, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(this::sendHeartbeat, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
+    // todo maybe remove sequence number from heartbeat
     private void sendHeartbeat() {
-        // todo implement
+        HeartbeatMessage heartbeat = new HeartbeatMessage(clientId, 0, System.currentTimeMillis());
+        enqueue(heartbeat);
     }
 
     private void startRetryScheduler() {
-        scheduler.scheduleAtFixedRate(this::retryExpiredMessages, 0, RETRY_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(this::retryExpiredMessages, RETRY_INTERVAL_MS, RETRY_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     private void retryExpiredMessages() {
-        // todo implement
+        long currentTime = System.currentTimeMillis();
+        for (Map.Entry<String, ClientPendingMessage> entry : pendingMessages.entrySet()) {
+            ClientPendingMessage pending = entry.getValue();
+            if (currentTime - pending.getTrackingTimestamp() > ACK_TIMEOUT_MS) {
+                enqueue(pending.getMessage());
+                pending.resetTimestamp();
+            }
+        }
     }
-
-//    private void retryExpiredAcks() {
-//        long now = System.currentTimeMillis();
-//        for (Map.Entry<String, PendingAck> entry : pendingAcks.entrySet()) {
-//            PendingAck pending = entry.getValue();
-//            if (now - pending.getTrackedSinceMs() > ACK_TIMEOUT_MS) {
-//                System.out.println("Retrying message: " + entry.getKey());
-//                enqueue(pending.getMessage());
-//                pending.resetTimestamp();
-//            }
-//        }
-//    }
 
     private void handleMessage(Message msg) throws Exception {
         switch (msg.getType()) {
@@ -145,23 +158,12 @@ public class Client implements Publisher, Subscriber {
     }
 
     private void handleIncomingPublish(PublishMessage msg) throws Exception {
-        System.out.println("Message received! Topic: " + msg.getTopic() + " Payload: " + msg.getPayload());
+        System.out.println("Message received! Topic: " + msg.getTopic() + " Payload: " + new String(msg.getPayload()));
 
         // send ack back to broker
         long seqNum = sequenceCounter.incrementAndGet();
         AckMessage ack = new AckMessage(clientId, seqNum, System.currentTimeMillis(), msg.getMessageId());
         enqueue(ack);
-    }
-
-    private void drainQueue() {
-        Message msg;
-        while ((msg = outQueue.poll()) != null) {
-            try {
-                connection.send(msg);
-            } catch (Exception e) {
-                break; // connection is dead, stop trying
-            }
-        }
     }
 
     private void enqueue(Message msg) {

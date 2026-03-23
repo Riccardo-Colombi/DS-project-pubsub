@@ -59,7 +59,7 @@ public class Broker {
                 TcpConnection connection = new TcpConnection(socket);
 
                 ClientHandler handler = new ClientHandler(connection, this, executor);
-                executor.submit(handler);
+                handler.start();
             }
 
         } catch (Exception e) {
@@ -72,23 +72,27 @@ public class Broker {
         // todo check if it works
         for (Message msg : wal.recover()) {
             // Replay the historical messages to rebuild RAM state
-            dispatchMessage(msg, null);
+            dispatchMessage(msg);
         }
     }
 
-    public void onMessageReceived(Message message, TcpConnection connection) throws Exception {
-        // todo move to the handle message methods
-        if (message.getType() != MessageType.HEARTBEAT)
+    public void onMessageReceived(Message message) throws Exception {
+        // todo probably move to the handle message methods
+        if (message.getType() != MessageType.HEARTBEAT) {
             wal.append(message);
 
-        System.err.println("Message received: " + message.getMessageId() +
-                ", sender: " + message.getSenderId());
+            System.out.println("Message received - " +
+                    "message ID: " + message.getSequenceNumber() +
+                    ", sender ID: " + message.getSenderId() +
+                    ", message type: " + message.getType()
+            );
+        }
 
         // handle the message
-        dispatchMessage(message, connection);
+        dispatchMessage(message);
     }
 
-    private void dispatchMessage(Message message, TcpConnection connection) throws Exception {
+    private void dispatchMessage(Message message) throws Exception {
         switch (message.getType()) {
             case SUBSCRIBE:
                 handleSubscribe((SubscribeMessage) message);
@@ -103,7 +107,7 @@ public class Broker {
                 handleAcknowledgement((AckMessage) message);
                 break;
             case HEARTBEAT:
-                handleHeartbeat((HeartbeatMessage) message);
+                updateHeartbeat(message.getSenderId());
                 break;
             default:
                 System.err.println("Unknown message type received.");
@@ -112,6 +116,7 @@ public class Broker {
 
     private void handleSubscribe(SubscribeMessage msg) {
         String clientId = msg.getSenderId();
+        updateHeartbeat(clientId);
 
         topicSubscribersTable.addSubscription(msg.getTopic(), clientId);
 
@@ -120,6 +125,7 @@ public class Broker {
 
     private void handleUnsubscribe(UnsubscribeMessage msg) {
         String clientId = msg.getSenderId();
+        updateHeartbeat(clientId);
 
         topicSubscribersTable.removeSubscription(msg.getTopic(), clientId);
 
@@ -127,29 +133,37 @@ public class Broker {
     }
 
     private void handlePublish(PublishMessage msg) {
+        String publisherId = msg.getSenderId();
+        updateHeartbeat(publisherId);
+
         String topic = msg.getTopic();
         Set<String> interestedClients = topicSubscribersTable.getSubscribers(topic);
 
         if (!interestedClients.isEmpty()) {
             ackTracker.trackDelivery(msg, interestedClients);
 
-            for (String clientId : interestedClients) {
-                ClientHandler handler = clientRegistry.getClientHandler(clientId);
+            for (String interestedClientId : interestedClients) {
+                ClientHandler handler = clientRegistry.getClientHandler(interestedClientId);
                 if (handler != null)
                     handler.send(msg);
             }
         }
 
-        sendAck(msg.getSenderId(), msg.getMessageId());
+        sendAck(publisherId, msg.getMessageId());
     }
 
     public void handleAcknowledgement(AckMessage msg) {
-        ackTracker.handleAck(msg.getAcknowledgedMessageId(), msg.getSenderId());
+        String clientId = msg.getSenderId();
+        updateHeartbeat(clientId);
+
+        ackTracker.handleAck(msg.getAcknowledgedMessageId(), clientId);
     }
 
-    public void handleHeartbeat(HeartbeatMessage msg) {
-        ClientHandler handler = clientRegistry.getClientHandler(msg.getSenderId());
-        handler.updateHeartbeat();
+    public void updateHeartbeat(String senderId) {
+        ClientHandler handler = clientRegistry.getClientHandler(senderId);
+
+        if (handler != null)
+            handler.updateHeartbeat();
     }
 
     private void startHeartbeatChecker() {
@@ -172,7 +186,7 @@ public class Broker {
     private void retryExpiredMessages() {
         List<PendingMessage> expired = ackTracker.getExpiredMessages(ACK_TIMEOUT_MS);
         for (PendingMessage pending : expired) {
-            // todo check if the logic works
+
             pending.resetTimestamp(); // update message sent time
 
             for (String clientId : pending.getPendingSubscribers()) {
@@ -192,11 +206,10 @@ public class Broker {
     public void sendAck(String clientId, String msgId) {
         ClientHandler handler = clientRegistry.getClientHandler(clientId);
 
-        // client disconnected
-        if (handler == null) return;
-
-        Message ack = generateAck(msgId);
-        handler.send(ack);
+        if (handler != null) {
+            Message ack = generateAck(msgId);
+            handler.send(ack);
+        }
     }
 
     /**
