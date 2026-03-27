@@ -80,9 +80,11 @@ public class Broker {
 
     private void recoverState() throws Exception {
         // todo check if it works
+        long tempValue;
         for (Message msg : wal.recover()) {
-            if (msg.getSequenceNumber() > this.brokerCounter) {
-                this.brokerCounter = msg.getSequenceNumber();
+            tempValue = msg.getSequenceNumber();
+            if (tempValue > this.brokerCounter.longValue()) {
+                this.brokerCounter.set(tempValue);
             }
             // Replay the historical messages to rebuild RAM state
             dispatchMessage(msg);
