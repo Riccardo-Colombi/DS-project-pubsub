@@ -1,7 +1,8 @@
 package it.polimi.pubsub.broker.components;
 
-import it.polimi.pubsub.network.TcpConnection;
-
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 // The broker needs to know the components of a logical SubscriberID. A TCP disconnection doesn't mean that the client is gone forever.
@@ -9,39 +10,34 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientRegistry {
 
-    private final ConcurrentHashMap<String, ClientSession> clients;
+    private final ConcurrentHashMap<String, ClientHandler> clients;
 
     public ClientRegistry() {
         this.clients = new ConcurrentHashMap<>();
     }
 
-    public void registerClient(String clientId, TcpConnection connection) {
-        // ConcurrentHashMap.compute(...) locks only the specific key it's being modified
-        // if(clients.containsKey(id)) { ... } can cause race conditions
-        clients.compute(clientId, (id, existingSession) -> {
-            if (existingSession == null) {
-                // Brand new client
-                return new ClientSession(clientId, connection);
-            } else {
-                // Existing client reconnecting: update the physical socket
-                existingSession.updateConnection(connection);
-                return existingSession;
-            }
-        });
+    public void registerClient(String clientId, ClientHandler handler) {
+        clients.put(clientId, handler);
     }
 
-    public ClientSession getSession(String clientId) {
-        return clients.get(clientId);
-    }
-
-    public void markDisconnected(String clientId) {
-        ClientSession session = clients.get(clientId);
-        if (session != null) {
-            session.setStatus(ClientStatus.DISCONNECTED);
-        }
-    }
-
-    public void removeClient(String clientId) {
+    public void disconnectClient(String clientId) {
         clients.remove(clientId);
+    }
+
+    // check if the client is already registered and connected in the registry
+    public boolean isClientConnected(String clientId) {
+        return clients.containsKey(clientId);
+    }
+
+    public Set<String> getConnectedClients() {
+        return Collections.unmodifiableSet(clients.keySet());
+    }
+
+    public Collection<ClientHandler> getConnectedClientHandlers() {
+        return Collections.unmodifiableCollection(clients.values());
+    }
+
+    public ClientHandler getClientHandler(String clientId) {
+        return clients.get(clientId);
     }
 }

@@ -47,7 +47,7 @@ public class AckTracker {
         List<PendingMessage> expired = new ArrayList<>();
 
         for (PendingMessage pending : unackedMessages.values()) {
-            if (currentTime - pending.getTimestamp() > timeoutMillis) {
+            if (currentTime - pending.getTrackingTimestamp() > timeoutMillis) {
                 expired.add(pending);
             }
         }
