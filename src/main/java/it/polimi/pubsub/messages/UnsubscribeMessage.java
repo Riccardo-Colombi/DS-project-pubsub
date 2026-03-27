@@ -1,6 +1,7 @@
 package it.polimi.pubsub.messages;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class UnsubscribeMessage extends Message {
@@ -21,6 +22,7 @@ public class UnsubscribeMessage extends Message {
     public String getTopic() { return topic; }
 
     @Override
+    @JsonIgnore
     public MessageType getType() {
         return MessageType.UNSUBSCRIBE;
     }

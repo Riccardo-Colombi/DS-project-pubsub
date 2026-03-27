@@ -1,5 +1,6 @@
 package it.polimi.pubsub.network;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import it.polimi.pubsub.messages.Message;
 
@@ -22,7 +23,7 @@ public class MessageSerializer {
         return mapper.writeValueAsString(message);
     }
 
-    public Message deserialize(String data) throws Exception {
+    public Message deserialize(String data) throws JsonProcessingException {
         return mapper.readValue(data, Message.class);
     }
 }

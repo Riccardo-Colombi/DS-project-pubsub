@@ -1,5 +1,6 @@
 package it.polimi.pubsub.messages;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
@@ -25,8 +26,9 @@ public class AckMessage extends Message {
     }
 
     @Override
+    @JsonIgnore
     public MessageType getType() {
-        return MessageType.SUBSCRIBE;
+        return MessageType.ACK;
     }
 
     public String getAcknowledgedMessageId() {

@@ -1,6 +1,7 @@
 package it.polimi.pubsub.messages;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class SubscribeMessage extends Message {
@@ -23,6 +24,7 @@ public class SubscribeMessage extends Message {
     }
 
     @Override
+    @JsonIgnore
     public MessageType getType() {
         return MessageType.SUBSCRIBE;
     }
