@@ -45,6 +45,7 @@ public abstract class Message {
 
     @JsonIgnore
     public String getMessageId() {
-        return senderId + ":" + sequenceNumber;
+        // Added timestamp so that if client reboot and counter starts from 0, there is no collision.
+        return senderId + ":" + sequenceNumber + ":" + timestamp;
     }
 }

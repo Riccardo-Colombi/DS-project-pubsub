@@ -16,8 +16,8 @@ public class ClientRegistry {
         this.clients = new ConcurrentHashMap<>();
     }
 
-    public void registerClient(String clientId, ClientHandler handler) {
-        clients.put(clientId, handler);
+    public boolean registerClient(String clientId, ClientHandler handler) {
+        return clients.putIfAbsent(clientId, handler) == null;
     }
 
     public void disconnectClient(String clientId) {
