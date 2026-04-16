@@ -34,6 +34,8 @@ public class Broker {
     private AtomicLong brokerCounter;
     private int port;
 
+    private int testCountForSnapshot;
+
     private static final long ACK_TIMEOUT_MS = 5000;
     private static final long RETRY_INTERVAL_MS = 2000;
     private static final long HEARTBEAT_TIMEOUT_MS = 10000;
@@ -50,6 +52,8 @@ public class Broker {
         this.port = 8080;
 
         this.role = BrokerRole.FOLLOWER;
+
+        this.testCountForSnapshot = 0;
 
         recoverState();
     }
@@ -97,14 +101,21 @@ public class Broker {
     public void onMessageReceived(Message message) throws Exception {
         // todo probably move to the handle message methods
         if (message.getType() != MessageType.HEARTBEAT) {
+
+            testCountForSnapshot++;
+
             wal.append(message);
 
             // If dim(wal) > 10kB -> take snapshot
 
-            if (wal.getSize() > 10 * 1024) {
-                System.out.println("Starting snapshot");
-                takeSnapshot();
-            }
+//            if (wal.getSize() > 10 * 1024) {
+//                System.out.println("Starting snapshot");
+//                takeSnapshot();
+//            }
+
+
+
+
 
             System.out.println("Message received - " +
                     "message ID: " + message.getSequenceNumber() +
@@ -115,6 +126,14 @@ public class Broker {
 
         // handle the message
         dispatchMessage(message);
+
+        // if testCountForSnapshot >= ... -> take snapshot
+
+        if (testCountForSnapshot >= 4){
+            testCountForSnapshot = 0;
+            System.out.println("Starting snapshot");
+            takeSnapshot();
+        }
     }
 
     private void dispatchMessage(Message message) throws Exception {

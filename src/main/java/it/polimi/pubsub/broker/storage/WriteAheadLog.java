@@ -4,6 +4,9 @@ import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.network.MessageSerializer;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,6 +37,13 @@ public class WriteAheadLog {
     public WriteAheadLog(String filePath) throws IOException {
         this.logFile = new File(filePath);
         this.serializer = new MessageSerializer();
+
+//        File parent = logFile.getParentFile();
+//        if (parent != null && !parent.exists()) {
+//            if (!parent.mkdirs()) {
+//                throw new IOException("Impossibile creare le directory per: " + filePath);
+//            }
+//        }
 
         if(!logFile.exists()) {
             logFile.getParentFile().mkdirs();
@@ -103,17 +113,21 @@ public class WriteAheadLog {
         }
 
         this.close();
-        boolean success = tempFile.renameTo(logFile);
 
         try {
-            this.writer = new BufferedWriter(new FileWriter(logFile, true));
+            Path source = tempFile.toPath();
+            Path target = logFile.toPath();
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            throw new IOException("fatal error, not able to open wal", e);
-        }
-
-        if (!success) {
-            if (tempFile.exists()) tempFile.delete();
-            throw new IOException("failed snapshot, keep using old WAL");
+            if (tempFile.exists())
+                tempFile.delete();
+            throw new IOException("Failed to replace log file with snapshot", e);
+        } finally {
+            try {
+                this.writer = new BufferedWriter(new FileWriter(logFile, true));
+            } catch (IOException e) {
+                throw new IOException("Fatal error: not able to reopen WAL after snapshot", e);
+            }
         }
     }
 
