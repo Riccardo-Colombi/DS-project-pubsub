@@ -108,6 +108,26 @@ public class ClientHandler {
             shutdown();
     }
 
+    // TODO: Il metodo shutdown() cancella i task con readerTask.cancel(true) dopo aver chiuso la connessione,
+    //  ma shutdown() stesso può essere chiamato sia da readLoop che da writeLoop concorrentemente. Anche se disconnected
+    //  è protetto da AtomicBoolean, i campi readerTask e writerTask sono impostati in start() e potrebbero essere null
+    //  se shutdown() viene chiamato prima che start() completi (improbabile ma possibile).
+
+    /*
+        Soluzione:
+
+        running = false;
+        try { connection.close(); } catch (IOException e) { ... }
+
+        // Un task non dovrebbe cancellarsi da solo — usare un thread separato
+        executor.submit(() -> {
+            if (readerTask != null) readerTask.cancel(true);
+            if (writerTask != null) writerTask.cancel(true);
+        });
+
+        if (clientId != null)
+            broker.onClientDisconnection(clientId);
+     */
     private void shutdown() {
         running = false;
 

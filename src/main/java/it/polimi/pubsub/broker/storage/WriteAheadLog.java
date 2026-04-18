@@ -52,6 +52,20 @@ public class WriteAheadLog {
         this.writer = new BufferedWriter(new FileWriter(logFile, true));
     }
 
+    // TODO: snapshot() chiama this.close() e poi riapre il writer. Nel frattempo, append() è synchronized ma su this —
+    //  il problema è che snapshot() è anch'esso synchronized, quindi sono mutuamente esclusivi. Tuttavia, tra close() e
+    //  la riapertura del writer, se un thread riesce a ottenere il lock (es. subito dopo che snapshot lo rilascia
+    //  temporaneamente) e il writer è null, si avrebbe un NullPointerException. Il fix è assicurarsi che writer non
+    //  sia mai null durante append
+
+    /*
+        Soluzione:
+
+        public synchronized void append(Message message) throws Exception {
+            if (writer == null) throw new IllegalStateException("WAL is closed");
+            // ...
+        }
+     */
     public synchronized void append(Message message) throws Exception {
         String jsonPayload = serializer.serialize(message);
         writer.write(jsonPayload);

@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import java.util.List;
@@ -34,7 +35,7 @@ public class Broker {
     private AtomicLong brokerCounter;
     private int port;
 
-    private int testCountForSnapshot;
+    private final AtomicInteger testCountForSnapshot = new AtomicInteger(0);
 
     private static final long ACK_TIMEOUT_MS = 5000;
     private static final long RETRY_INTERVAL_MS = 2000;
@@ -52,8 +53,6 @@ public class Broker {
         this.port = 8080;
 
         this.role = BrokerRole.FOLLOWER;
-
-        this.testCountForSnapshot = 0;
 
         recoverState();
     }
@@ -89,16 +88,31 @@ public class Broker {
         for (Message msg : messages) {
             switch (msg.getType()) {
                 case SUBSCRIBE:
-                    topicSubscribersTable.addSubscription(
-                            ((SubscribeMessage) msg).getTopic(), msg.getSenderId());
+                    topicSubscribersTable.addSubscription(((SubscribeMessage) msg).getTopic(), msg.getSenderId());
                     break;
+
                 case UNSUBSCRIBE:
-                    topicSubscribersTable.removeSubscription(
-                            ((UnsubscribeMessage) msg).getTopic(), msg.getSenderId());
+                    topicSubscribersTable.removeSubscription(((UnsubscribeMessage) msg).getTopic(), msg.getSenderId());
                     break;
+
+                case PUBLISH:
+                    PublishMessage pub = (PublishMessage) msg;
+                    // Snapshot dei subscriber iscritti in questo preciso
+                    // momento del recover: rispecchia chi c'era quando il
+                    // messaggio era arrivato al broker originariamente.
+                    Set<String> subscribersAtThatTime = topicSubscribersTable.getSubscribers(pub.getTopic());
+                    if (!subscribersAtThatTime.isEmpty()) {
+                        ackTracker.trackDelivery(pub, subscribersAtThatTime);
+                    }
+                    break;
+
+                case ACK:
+                    AckMessage ack = (AckMessage) msg;
+                    ackTracker.handleAck(ack.getAcknowledgedMessageId(), ack.getSenderId());
+                    break;
+
                 default:
-                    // PUBLISH, ACK, HEARTBEAT doesn't modify the state of subscription:
-                    // they are ignored in phase of recovery.
+                    // This is for HEARTBEAT
                     break;
             }
         }
@@ -110,7 +124,7 @@ public class Broker {
         // todo probably move to the handle message methods
         if (message.getType() != MessageType.HEARTBEAT) {
 
-            testCountForSnapshot++;
+            testCountForSnapshot.incrementAndGet();
 
             wal.append(message);
 
@@ -120,10 +134,6 @@ public class Broker {
 //                System.out.println("Starting snapshot");
 //                takeSnapshot();
 //            }
-
-
-
-
 
             System.out.println("Message received - " +
                     "message ID: " + message.getSequenceNumber() +
@@ -137,9 +147,8 @@ public class Broker {
 
         // if testCountForSnapshot >= ... -> take snapshot
 
-        if (testCountForSnapshot >= 4){
-            testCountForSnapshot = 0;
-            System.out.println("Starting snapshot");
+        if (testCountForSnapshot.incrementAndGet() >= 4) {
+            testCountForSnapshot.set(0);
             takeSnapshot();
         }
     }
@@ -266,12 +275,13 @@ public class Broker {
     }
 
     public void addClientToRegistry(String clientId, ClientHandler handler) {
-        boolean added = clientRegistry.registerClient(clientId, handler);
-        if (!added) {
-            System.out.println("Client " + clientId + " reconnected, handler updated.");
-        }
+        clientRegistry.registerClient(clientId, handler);
     }
 
+    // TODO: When a client is definitively disconnected, his subscriptions remains in TopicSubscribersTable
+    // TODO: Broker will track ACK from a client that never exists
+
+    // TODO: hint from Boglio: add inside disconnectClient an UnsubscribeMessage
     public void onClientDisconnection(String clientId) {
         if (clientRegistry.isClientConnected(clientId))
             clientRegistry.disconnectClient(clientId);
