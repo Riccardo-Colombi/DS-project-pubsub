@@ -19,6 +19,9 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
         @JsonSubTypes.Type(value = AckMessage.class, name = "ACK")
 })
 
+// TODO Update this to be coherent with Raft
+// Add term and index
+
 public abstract class Message {
 
     private final String senderId;

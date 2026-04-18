@@ -53,4 +53,8 @@ public class AckTracker {
         }
         return expired;
     }
+
+    public java.util.Collection<PendingMessage> getPendingMessages() {
+        return unackedMessages.values();
+    }
 }

@@ -28,11 +28,21 @@ public class firstRun {
         Thread.sleep(1000);
 
         subscriber.disconnect();
-
-        publisher.publish("news", "hello".getBytes());
         Thread.sleep(1000);
 
-        Thread.sleep(10000);
+        publisher.publish("news", "hello1".getBytes());
+        publisher.publish("news", "hello2".getBytes());
+        Thread.sleep(1000);
+
         subscriber.connect();
+
+        subscriber.unsubscribe("news");
+        Thread.sleep(500);
+        subscriber.disconnect();
+        Thread.sleep(1000);
+
+
+
+
     }
 }

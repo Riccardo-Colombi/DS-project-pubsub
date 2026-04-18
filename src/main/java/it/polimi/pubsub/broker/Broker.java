@@ -15,16 +15,26 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import java.util.List;
+
+// TODO Update this to be coherent with Raft
+// State machine for roles LEADER, FOLLOWER, CANDIDATE
+// Add random timout for leader election
+
 public class Broker {
+
     private final TopicSubscribersTable topicSubscribersTable;
     private final ClientRegistry clientRegistry;
     private final AckTracker ackTracker;
     private final WriteAheadLog wal;
+    private final BrokerRole role;
 
     private final ExecutorService executor;
     private final ScheduledExecutorService scheduler;
     private AtomicLong brokerCounter;
     private int port;
+
+    private int testCountForSnapshot;
 
     private static final long ACK_TIMEOUT_MS = 5000;
     private static final long RETRY_INTERVAL_MS = 2000;
@@ -40,6 +50,10 @@ public class Broker {
         this.scheduler = Executors.newScheduledThreadPool(2);
         this.brokerCounter = new AtomicLong(0);
         this.port = 8080;
+
+        this.role = BrokerRole.FOLLOWER;
+
+        this.testCountForSnapshot = 0;
 
         recoverState();
     }
@@ -95,7 +109,21 @@ public class Broker {
     public void onMessageReceived(Message message) throws Exception {
         // todo probably move to the handle message methods
         if (message.getType() != MessageType.HEARTBEAT) {
+
+            testCountForSnapshot++;
+
             wal.append(message);
+
+            // If dim(wal) > 10kB -> take snapshot
+
+//            if (wal.getSize() > 10 * 1024) {
+//                System.out.println("Starting snapshot");
+//                takeSnapshot();
+//            }
+
+
+
+
 
             System.out.println("Message received - " +
                     "message ID: " + message.getSequenceNumber() +
@@ -106,6 +134,14 @@ public class Broker {
 
         // handle the message
         dispatchMessage(message);
+
+        // if testCountForSnapshot >= ... -> take snapshot
+
+        if (testCountForSnapshot >= 4){
+            testCountForSnapshot = 0;
+            System.out.println("Starting snapshot");
+            takeSnapshot();
+        }
     }
 
     private void dispatchMessage(Message message) throws Exception {
@@ -239,5 +275,32 @@ public class Broker {
     public void onClientDisconnection(String clientId) {
         if (clientRegistry.isClientConnected(clientId))
             clientRegistry.disconnectClient(clientId);
+    }
+
+    private synchronized void takeSnapshot() throws Exception {
+        List<Message> snapshotState = new java.util.ArrayList<>();
+        long currentTime = System.currentTimeMillis();
+
+        // Saving Subscribe Table
+
+        for (String topic : topicSubscribersTable.getTopics()) {
+            for (String clientId : topicSubscribersTable.getSubscribers(topic)) {
+                SubscribeMessage subMsg = new SubscribeMessage(
+                        clientId,
+                        0,
+                        currentTime,
+                        topic
+                );
+                snapshotState.add(subMsg);
+            }
+        }
+
+        // Saving Pending Messages
+
+        for (PendingMessage pending : ackTracker.getPendingMessages()) {
+            snapshotState.add(pending.getMessage());
+        }
+
+        wal.snapshot(snapshotState);
     }
 }
