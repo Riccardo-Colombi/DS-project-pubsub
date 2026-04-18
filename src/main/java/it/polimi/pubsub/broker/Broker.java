@@ -83,19 +83,27 @@ public class Broker {
     }
 
     private void recoverState() throws Exception {
-        // todo check if it works
-        long tempValue;
-        for (Message msg : wal.recover()) {
-            tempValue = msg.getSequenceNumber();
-            if (tempValue > this.brokerCounter.longValue()) {
-                this.brokerCounter.set(tempValue);
+        List<Message> messages = wal.recover();
+        System.out.println("Recovering state from WAL: " + messages.size() + " entries.");
+
+        for (Message msg : messages) {
+            switch (msg.getType()) {
+                case SUBSCRIBE:
+                    topicSubscribersTable.addSubscription(
+                            ((SubscribeMessage) msg).getTopic(), msg.getSenderId());
+                    break;
+                case UNSUBSCRIBE:
+                    topicSubscribersTable.removeSubscription(
+                            ((UnsubscribeMessage) msg).getTopic(), msg.getSenderId());
+                    break;
+                default:
+                    // PUBLISH, ACK, HEARTBEAT doesn't modify the state of subscription:
+                    // they are ignored in phase of recovery.
+                    break;
             }
-            // Replay the historical messages to rebuild RAM state
-            dispatchMessage(msg);
         }
 
-        // TODO: handle pending messages
-        // Partial solution on Boglio's notes
+        System.out.println("State recovery complete.");
     }
 
     public void onMessageReceived(Message message) throws Exception {
@@ -196,7 +204,7 @@ public class Broker {
         sendAck(publisherId, msg.getMessageId());
     }
 
-    public void handleAcknowledgement(AckMessage msg) {
+     void handleAcknowledgement(AckMessage msg) {
         String clientId = msg.getSenderId();
         updateHeartbeat(clientId);
 
@@ -241,13 +249,8 @@ public class Broker {
             }
         }
     }
-
-    /**
-     * Send an acknowledgement message for message with the specified msgId, to the client with the specified clientId
-     * @param clientId
-     * @param msgId
-     */
-    public void sendAck(String clientId, String msgId) {
+    
+    void sendAck(String clientId, String msgId) {
         ClientHandler handler = clientRegistry.getClientHandler(clientId);
 
         if (handler != null) {
@@ -256,20 +259,17 @@ public class Broker {
         }
     }
 
-    /**
-     * generate an acknowledgement message for message with the specified msgId
-     * @param msgId
-     * @return
-     */
-    public AckMessage generateAck(String msgId) {
+    AckMessage generateAck(String msgId) {
         long brokerSeqNum = brokerCounter.incrementAndGet();
         long currentTime = System.currentTimeMillis();
         return new AckMessage("Broker", brokerSeqNum, currentTime, msgId);
     }
 
     public void addClientToRegistry(String clientId, ClientHandler handler) {
-        if (!clientRegistry.isClientConnected(clientId))
-            clientRegistry.registerClient(clientId, handler);
+        boolean added = clientRegistry.registerClient(clientId, handler);
+        if (!added) {
+            System.out.println("Client " + clientId + " reconnected, handler updated.");
+        }
     }
 
     public void onClientDisconnection(String clientId) {
