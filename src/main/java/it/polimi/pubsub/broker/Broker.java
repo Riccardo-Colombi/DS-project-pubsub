@@ -9,6 +9,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -16,51 +18,66 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import java.util.List;
-
-// TODO Update this to be coherent with Raft
-// State machine for roles LEADER, FOLLOWER, CANDIDATE
-// Add random timout for leader election
-
+/**
+ * Central broker with support for durable subscribers and client reconnection.
+ *
+ * Reconnect flow
+ * 1. Client reconnects with the same clientId.
+ * 2. addClientToRegistry() updates the handler in ClientRegistry.
+ * 3. deliverOfflineMessages() drains the OfflineMessageStore for that clientId
+ *    and sends every buffered PublishMessage down the new connection.
+ * 4. The AckTracker still holds the pending ACKs, so the retry scheduler
+ *    will also re-send any unACKed messages automatically.
+ *
+ * Disconnect flow
+ * 1. ClientHandler detects the TCP drop and calls broker.onClientDisconnection().
+ * 2. ClientRegistry.markOffline() removes the handler but keeps the record.
+ * 3. Non-durable subscriptions are removed from TopicSubscribersTable.
+ * 4. Durable subscriptions remain; future PublishMessages for offline durable
+ *    subscribers are stored in OfflineMessageStore.
+ */
 public class Broker {
+    private final TopicSubscribersTable     topicSubscribersTable;
+    private final ClientRegistry            clientRegistry;
+    private final AckTracker                ackTracker;
+    private final WriteAheadLog             wal;
+    private final OfflineMessageStore       offlineStore;
+    private final BrokerRole                role;
 
-    private final TopicSubscribersTable topicSubscribersTable;
-    private final ClientRegistry clientRegistry;
-    private final AckTracker ackTracker;
-    private final WriteAheadLog wal;
-    private final BrokerRole role;
 
-    private final ExecutorService executor;
-    private final ScheduledExecutorService scheduler;
-    private AtomicLong brokerCounter;
-    private int port;
+    private final ExecutorService           executor;
+    private final ScheduledExecutorService  scheduler;
+    private AtomicLong                      brokerCounter = new AtomicLong(0);
+    private final AtomicInteger             messagesAfterLastSnap = new AtomicInteger(0);
+    private int                             port;
 
-    private final AtomicInteger testCountForSnapshot = new AtomicInteger(0);
+    private static final long SNAPSHOT_EVERY_N_MESSAGES     = 50;
+    private static final long ACK_TIMEOUT_MS                = 5000;
+    private static final long RETRY_INTERVAL_MS             = 2000;
+    private static final long HEARTBEAT_TIMEOUT_MS          = 10000;
+    private static final long HEARTBEAT_CHECK_INTERVAL_MS   = 3000;
 
-    private static final long ACK_TIMEOUT_MS = 5000;
-    private static final long RETRY_INTERVAL_MS = 2000;
-    private static final long HEARTBEAT_TIMEOUT_MS = 10000;
-    private static final long HEARTBEAT_CHECK_INTERVAL_MS = 3000;
-
-    public Broker(String walFilePath) throws Exception {
+    public Broker(String walFilePath, String offlineStorePath) throws Exception {
         this.topicSubscribersTable = new TopicSubscribersTable();
-        this.clientRegistry = new ClientRegistry();
-        this.ackTracker = new AckTracker();
-        this.wal = new WriteAheadLog(walFilePath);
-        this.executor = Executors.newCachedThreadPool();
-        this.scheduler = Executors.newScheduledThreadPool(2);
-        this.brokerCounter = new AtomicLong(0);
-        this.port = 8080;
+        this.clientRegistry        = new ClientRegistry();
+        this.ackTracker            = new AckTracker();
+        this.wal                   = new WriteAheadLog(walFilePath);
+        this.offlineStore          = new OfflineMessageStore(offlineStorePath);
+        this.executor              = Executors.newCachedThreadPool();
+        this.scheduler             = Executors.newScheduledThreadPool(2);
+        this.port                  = 8080;
+        this.role                  = BrokerRole.FOLLOWER;
 
-        this.role = BrokerRole.FOLLOWER;
-
+        offlineStore.recover();
         recoverState();
+
     }
 
+    // ------------------------------------------------------------------
+    // Startup
+    // ------------------------------------------------------------------
     public void run() {
-
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-
             System.out.println("Broker listening on port " + port);
 
             startHeartbeatChecker();
@@ -69,18 +86,20 @@ public class Broker {
             while (true) {
                 Socket socket = serverSocket.accept();
                 System.out.println("New client connected: " + socket.getRemoteSocketAddress());
-                TcpConnection connection = new TcpConnection(socket);
 
+                TcpConnection connection = new TcpConnection(socket);
                 ClientHandler handler = new ClientHandler(connection, this, executor);
                 handler.start();
             }
-
         } catch (Exception e) {
             System.err.println("TcpServer error: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
+    // ------------------------------------------------------------------
+    // WAL recovery
+    // ------------------------------------------------------------------
     private void recoverState() throws Exception {
         List<Message> messages = wal.recover();
         System.out.println("Recovering state from WAL: " + messages.size() + " entries.");
@@ -258,7 +277,7 @@ public class Broker {
             }
         }
     }
-    
+
     void sendAck(String clientId, String msgId) {
         ClientHandler handler = clientRegistry.getClientHandler(clientId);
 
