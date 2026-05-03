@@ -80,7 +80,7 @@ public abstract class ConnectionHandler {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("Thread interrupted: " + e.getMessage());
+            System.out.println("Write loop stopped (shutdown).");
         } catch (Exception e) {
             System.out.println("Serialization error: " + e.getMessage());
         } finally {
