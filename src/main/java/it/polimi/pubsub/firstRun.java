@@ -9,7 +9,7 @@ public class firstRun {
         // start broker in background
         Thread brokerThread = new Thread(() -> {
             try {
-                new Broker("data/wal.log").run();
+                new Broker("broker1", "data/wal.log").run();
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

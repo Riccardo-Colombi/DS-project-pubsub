@@ -9,20 +9,20 @@ import java.io.IOException;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ClientHandler {
+public abstract class ConnectionHandler {
 
-    private final TcpConnection connection;
-    private final Broker broker;
+    protected final TcpConnection connection;
+    protected final Broker broker;
     private final ExecutorService executor;
     private volatile boolean running = true;
     private final AtomicBoolean disconnected;
     private volatile long lastHeartbeatTime = System.currentTimeMillis();
-    private String clientId;
+    protected volatile String nodeId;
     private final BlockingQueue<Message> outQueue = new LinkedBlockingQueue<>();
     private Future<?> readerTask;
     private Future<?> writerTask;
 
-    public ClientHandler(TcpConnection connection, Broker broker, ExecutorService executor) {
+    public ConnectionHandler(TcpConnection connection, Broker broker, ExecutorService executor) {
         this.connection = connection;
         this.broker = broker;
         this.executor = executor;
@@ -33,6 +33,10 @@ public class ClientHandler {
         readerTask = executor.submit(this::readLoop);
         writerTask = executor.submit(this::writeLoop);
     }
+
+    protected abstract void registerNode(String nodeId);
+
+    protected abstract void nodeDisconnection(String nodeId);
 
     private void readLoop() {
         try {
@@ -46,9 +50,9 @@ public class ClientHandler {
                     break;
                 }
 
-                if (clientId == null) {
-                    clientId = msg.getSenderId();
-                    broker.addClientToRegistry(clientId, this);
+                if (nodeId == null) {
+                    nodeId = msg.getSenderId();
+                    registerNode(nodeId); // todo probably remove
                 }
 
                 broker.onMessageReceived(msg);
@@ -144,11 +148,11 @@ public class ClientHandler {
             writerTask.cancel(true);
 
         // Notify broker that client disconnected
-        if (clientId != null)
-            broker.onClientDisconnection(clientId);
+        if (nodeId != null)
+            nodeDisconnection(nodeId);
     }
 
-    public String getClientId() {
-        return clientId;
+    public String getNodeId() {
+        return nodeId;
     }
 }
