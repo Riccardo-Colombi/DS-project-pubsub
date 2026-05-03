@@ -3,6 +3,9 @@ package it.polimi.pubsub.messages;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import it.polimi.pubsub.messages.brokerMessages.BrokerPublishMessage;
+import it.polimi.pubsub.messages.brokerMessages.BrokerSubscribeMessage;
+import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
 
 @JsonTypeInfo(
         use = JsonTypeInfo.Id.NAME,
@@ -13,8 +16,12 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
 @JsonSubTypes({
         @JsonSubTypes.Type(value = PublishMessage.class, name = "PUBLISH"),
+        @JsonSubTypes.Type(value = BrokerPublishMessage.class, name = "BROKER_PUBLISH"),
         @JsonSubTypes.Type(value = SubscribeMessage.class, name = "SUBSCRIBE"),
+        @JsonSubTypes.Type(value = BrokerSubscribeMessage.class, name = "BROKER_SUBSCRIBE"),
         @JsonSubTypes.Type(value = UnsubscribeMessage.class, name = "UNSUBSCRIBE"),
+        @JsonSubTypes.Type(value = BrokerUnsubscribeMessage.class, name = "BROKER_UNSUBSCRIBE"),
+        @JsonSubTypes.Type(value = BrokerUnsubscribeMessage.class, name = "BROKER_HELLO"),
         @JsonSubTypes.Type(value = HeartbeatMessage.class, name = "HEARTBEAT"),
         @JsonSubTypes.Type(value = AckMessage.class, name = "ACK")
 })

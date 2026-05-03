@@ -3,127 +3,165 @@ package it.polimi.pubsub.broker.components;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
-/**
- * Maps topics to subscriber IDs.
- *
- * After updated of client recover: distinguishes between durable and non-durable subscribers:
- *  - durable: subscription survives disconnection; messages are buffered while offline.
- *  - non-durable: subscription is removed when the client disconnects (as before the update).
- */
 public class TopicSubscribersTable {
 
-    // TODO: decide to leave this reminder or not.
-    // Do not use HashMap for multiple network threads reading/writing things to the structure.
-    // Risk of ConcurrentModificationException.
+    // Do not use HashMap for multiple network threads reading/writing things to the structure. Risk of ConcurrentModificationException.
     // Use java.util.concurrent and in particular ConcurrentHashMap.newKeySet()
-
-    // topic → set of all subscriber IDs (durable + non-durable)
-    private final ConcurrentHashMap<String, Set<String>> topicSubscribers;
-
-    // clientId → set of topics for which this client has a DURABLE subscription
-    // Used to know: (a) which subscriptions to keep on disconnect,
-    //               (b) for which clients to buffer messages.
-    private final ConcurrentHashMap<String, Set<String>> durableSubscriptions;
-
+    private final ConcurrentHashMap<String, TopicSubscriptions> topicSubscribers;
 
     public TopicSubscribersTable() {
         this.topicSubscribers = new ConcurrentHashMap<>();
-        this.durableSubscriptions = new ConcurrentHashMap<>();
     }
 
-    // -------------------------------------------------------------------------
-    // Write operations
-    // -------------------------------------------------------------------------
-    /** New addSubscription method. */
-    public void addSubscription(String topic, String subscriberId, boolean durable) {
-        topicSubscribers.computeIfAbsent(topic, k -> ConcurrentHashMap.newKeySet())
-                .add(subscriberId);
+    // return true if the client is the first to subscribe to the topic
+    public boolean addClientSubscription(String topic, String subscriberId) {
+        AtomicBoolean firstClient = new AtomicBoolean(false);
 
-        if (durable) {
-            durableSubscriptions.computeIfAbsent(subscriberId, k -> ConcurrentHashMap.newKeySet())
-                    .add(topic);
-        }
+        topicSubscribers.compute(topic, (t, subscribers) -> {
+            if (subscribers == null)
+                subscribers = new TopicSubscriptions();
+
+            // First local client regardless of broker entries already present
+            if (subscribers.getClients().isEmpty())
+                firstClient.set(true);
+
+            subscribers.addClient(subscriberId);
+
+            return subscribers;
+        });
+
+        return firstClient.get();
     }
 
-    /** Backward-compatible overload (non-durable). */
-    public void addSubscription(String topic, String subscriberId) {
-        addSubscription(topic, subscriberId, false);
+    // return true if the client removed was the last subscribed to the topic
+    public boolean removeClientSubscription(String topic, String subscriberId) {
+        AtomicBoolean lastClient = new AtomicBoolean(false);
+
+        topicSubscribers.computeIfPresent(topic, (t, subscribers) -> {
+            subscribers.removeClient(subscriberId);
+
+            if (subscribers.getClients().isEmpty())
+                lastClient.set(true); // no more local clients, even if brokers remain
+
+            if (subscribers.isEmpty())
+                return null; // topic fully empty, remove the entry
+
+            return subscribers;
+        });
+
+        return lastClient.get();
     }
 
-    /**
-     * Fully remove a subscription (called on explicit UNSUBSCRIBE).
-     * Removes both the durable record and the topic entry.
-     */
-    public void removeSubscription(String topic, String subscriberId) {
-        Set<String> subscribers = topicSubscribers.get(topic);
-        if (subscribers != null) {
-            subscribers.remove(subscriberId);
+    // return true if the interestedBroker wasn't already subscribed to the topic
+    public boolean addBrokerSubscription(String topic, String interestedBrokerId, String nextHopId) {
+        AtomicBoolean isNew = new AtomicBoolean(false);
 
-            if (subscribers.isEmpty()) {
-                topicSubscribers.remove(topic, subscribers);
-            }
-        }
+        topicSubscribers.compute(topic, (t, subscribers) -> {
+            if (subscribers == null)
+                subscribers = new TopicSubscriptions();
 
-        Set<String> durableTopics = durableSubscriptions.get(subscriberId);
-        if (durableTopics != null) {
-            durableTopics.remove(topic);
+            // putIfAbsent returns null if the key was not already present
+            if (subscribers.addBroker(interestedBrokerId, nextHopId))
+                isNew.set(true);
 
-            if (durableTopics.isEmpty()) {
-                durableSubscriptions.remove(subscriberId);
-            }
-        }
+            return subscribers;
+        });
+
+        return isNew.get();
     }
 
-    /**
-     * Remove only NON-DURABLE subscriptions for a client that has disconnected.
-     * Durable subscriptions are left intact.
-     */
-    public void removeNonDurableSubscriptions(String subscriberId) {
-        Set<String> durableTopics = durableSubscriptions.getOrDefault(
-                subscriberId, Collections.emptySet());
+    // return true if the interestedBroker wasn't already removed
+    public boolean removeBrokerSubscription(String topic, String interestedBrokerId) {
+        AtomicBoolean wasPresent = new AtomicBoolean(false);
 
-        for (String topic : topicSubscribers.keySet()) {
-            if (durableTopics.contains(topic)) continue; // keep durable.
+        topicSubscribers.computeIfPresent(topic, (t, subscribers) -> {
+            if (subscribers.removeBroker(interestedBrokerId))
+                wasPresent.set(true);
 
-            Set<String> subscribers = topicSubscribers.get(topic);
-            if (subscribers != null) {
-                subscribers.remove(subscriberId);
-                if (subscribers.isEmpty()) {
-                    topicSubscribers.remove(topic, subscribers);
-                }
-            }
-        }
-    }
+            if (subscribers.isEmpty())
+                return null; // atomically remove empty topic entry
 
-    // -------------------------------------------------------------------------
-    // Query operations
-    // -------------------------------------------------------------------------
-    public Set<String> getSubscribers(String topic) {
-        Set<String> subscribers = topicSubscribers.get(topic);
+            return subscribers;
+        });
 
-        // If there are no subscribers to a topic we can return a null, causing a NullPointerException risk
-        if (subscribers == null) {
-            return Collections.emptySet();
-        }
-
-        // Collections.unmodifiableSet() to not modify the set. Otherwise we are passing the actual set
-        return Collections.unmodifiableSet(subscribers);
+        return wasPresent.get();
     }
 
     public Set<String> getTopics() {
         return topicSubscribers.keySet();
     }
 
-    public boolean isDurableSubscriber(String clientId, String topic) {
-        Set<String> durableTopics = durableSubscriptions.get(clientId);
-        return durableTopics != null && durableTopics.contains(topic);
+    public Set<String> getInterestedClients(String topic) {
+        TopicSubscriptions subscribers = topicSubscribers.get(topic);
+
+        if (subscribers != null)
+            return subscribers.getClients();
+
+        return Collections.emptySet();
     }
 
-    /** All topics for which clientId has a durable subscription. */
-    public Set<String> getDurableTopics(String clientId) {
-        Set<String> topics = durableSubscriptions.get(clientId);
-        if (topics == null) return Collections.emptySet();
-        return Collections.unmodifiableSet(topics);
+    public Set<String> getInterestedBrokers(String topic) {
+        TopicSubscriptions subscribers = topicSubscribers.get(topic);
+
+        if (subscribers != null)
+            return subscribers.getInterestedBrokers();
+
+        return Collections.emptySet();
+    }
+
+    public Set<String> getNextHopOfInterestedBrokers(String topic) {
+        TopicSubscriptions subscribers = topicSubscribers.get(topic);
+
+        if (subscribers != null)
+            return subscribers.getInterestedBrokersNextHop();
+
+        return Collections.emptySet();
+    }
+
+    private class TopicSubscriptions {
+        private final Set<String> clients = ConcurrentHashMap.newKeySet();
+        //private final Set<String> brokers = ConcurrentHashMap.newKeySet();
+        // Map Interested brokers with corresponding next hop to reach them
+        private final ConcurrentHashMap<String, String> brokers = new ConcurrentHashMap<>();
+
+        public void addClient(String id) {
+            clients.add(id);
+        }
+
+        public void removeClient(String id) {
+            clients.remove(id);
+        }
+
+        // returns true if this origin was not already tracked
+        public boolean addBroker(String interestedBrokerId, String nextHopId) {
+            return brokers.putIfAbsent(interestedBrokerId, nextHopId) == null;
+        }
+
+        // return true if something gets actually deleted
+        public boolean removeBroker(String interestedBrokerId) {
+            return brokers.remove(interestedBrokerId) != null;
+        }
+
+        // Topic is globally gone when both sets are empty
+        public boolean isEmpty() { return clients.isEmpty() && brokers.isEmpty(); }
+
+        Set<String> getClients() {
+            return Collections.unmodifiableSet(clients);
+        }
+
+        ConcurrentHashMap<String, String> getBrokers() {
+            return brokers;
+        }
+
+        Set<String> getInterestedBrokers() {
+            return Collections.unmodifiableSet(brokers.keySet());
+        }
+
+        Set<String> getInterestedBrokersNextHop() {
+            return brokers.values().stream().collect(Collectors.toUnmodifiableSet());
+        }
     }
 }
