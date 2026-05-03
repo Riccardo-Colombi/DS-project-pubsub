@@ -36,6 +36,7 @@ public class Broker {
     private final ConnectionRegistry connectionRegistry;
     private final AckTracker ackTracker;
     private final WriteAheadLog wal;
+    private final OfflineMessageStore offlineStore;
     private final BrokerRole role;
 
     Cache<String, Boolean> messageCache = Caffeine.newBuilder()
@@ -52,27 +53,30 @@ public class Broker {
 
     private final AtomicInteger testCountForSnapshot = new AtomicInteger(0);
 
-    private static final long ACK_TIMEOUT_MS = 5000;
-    private static final long RETRY_INTERVAL_MS = 2000;
-    private static final long HEARTBEAT_TIMEOUT_MS = 10000;
+    private static final long ACK_TIMEOUT_MS              = 5000;
+    private static final long RETRY_INTERVAL_MS           = 2000;
+    private static final long HEARTBEAT_TIMEOUT_MS        = 10000;
     private static final long HEARTBEAT_CHECK_INTERVAL_MS = 3000;
-    private static final long CACHE_LIFETIME = 2;
+    private static final long CACHE_LIFETIME              = 2;
 
-    public Broker(String brokerId, int brokerPort, int clientPort, String walFilePath) throws Exception {
-        BROKER_ID = brokerId;
+
+    public Broker(String brokerId, int brokerPort, int clientPort,
+                  String walFilePath, String offlineStorePath) throws Exception {
+        BROKER_ID        = brokerId;
         this.CLIENT_PORT = clientPort;
         this.BROKER_PORT = brokerPort;
 
         this.topicSubscribersTable = new TopicSubscribersTable();
-        this.connectionRegistry = new ConnectionRegistry();
-        this.ackTracker = new AckTracker();
-        this.wal = new WriteAheadLog(walFilePath);
-        this.executor = Executors.newCachedThreadPool();
-        this.scheduler = Executors.newScheduledThreadPool(2);
-        this.brokerCounter = new AtomicLong(0);
+        this.connectionRegistry    = new ConnectionRegistry();
+        this.ackTracker            = new AckTracker();
+        this.wal                   = new WriteAheadLog(walFilePath);
+        this.offlineStore          = new OfflineMessageStore(offlineStorePath);
+        this.executor              = Executors.newCachedThreadPool();
+        this.scheduler             = Executors.newScheduledThreadPool(2);
+        this.brokerCounter         = new AtomicLong(0);
+        this.role                  = BrokerRole.FOLLOWER;
 
-        this.role = BrokerRole.FOLLOWER;
-
+        offlineStore.recover();   // load buffered messages from disk before accepting connections
         recoverState();
     }
 
@@ -83,14 +87,12 @@ public class Broker {
             executor.submit(this::runClientListener);
             executor.submit(this::runBrokerListener);
         } catch (Exception e) {
-            //TODO the above thread must rethrow the caught exception so we can enter in this catch and gracefully shutdown
             System.err.println("Fatal error: " + e.getMessage());
         }
     }
 
     private void runClientListener() {
         try (ServerSocket ss = new ServerSocket(CLIENT_PORT)) {
-
             System.out.println("Listening for clients on " + CLIENT_PORT);
 
             while (true) {
@@ -107,7 +109,6 @@ public class Broker {
 
     private void runBrokerListener() {
         try (ServerSocket ss = new ServerSocket(BROKER_PORT)) {
-
             System.out.println("Listening for brokers on " + BROKER_PORT);
 
             while (true) {
@@ -152,7 +153,9 @@ public class Broker {
         for (Message msg : messages) {
             switch (msg.getType()) {
                 case SUBSCRIBE:
-                    topicSubscribersTable.addClientSubscription(((SubscribeMessage) msg).getTopic(), msg.getSenderId());
+                    SubscribeMessage sub = (SubscribeMessage) msg;
+                    // Preserve the durable flag stored in the snapshot
+                    topicSubscribersTable.addClientSubscription(sub.getTopic(), sub.getSenderId(), sub.isDurable());
                     break;
 
                 case UNSUBSCRIBE:
@@ -161,9 +164,6 @@ public class Broker {
 
                 case PUBLISH:
                     PublishMessage pub = (PublishMessage) msg;
-                    // Snapshot dei subscriber iscritti in questo preciso
-                    // momento del recover: rispecchia chi c'era quando il
-                    // messaggio era arrivato al broker originariamente.
                     Set<String> subscribersAtThatTime = topicSubscribersTable.getInterestedClients(pub.getTopic());
                     if (!subscribersAtThatTime.isEmpty()) {
                         ackTracker.trackDelivery(pub, subscribersAtThatTime);
@@ -185,24 +185,17 @@ public class Broker {
     }
 
     public void onMessageReceived(Message message) throws Exception {
-        // todo probably move to the handle message methods
         if (message.getType() != MessageType.HEARTBEAT) {
-
             testCountForSnapshot.incrementAndGet();
-
             wal.append(message);
 
             System.out.println("Message received - " +
                     "message ID: " + message.getSequenceNumber() +
                     ", sender ID: " + message.getSenderId() +
-                    ", message type: " + message.getType()
-            );
+                    ", message type: " + message.getType());
         }
 
-        // handle the message
         dispatchMessage(message);
-
-        // if testCountForSnapshot >= ... -> take snapshot
 
         // todo not atomic, multiple thread could read 4 at almost the same time and take multiple snapshot (probably creating problems)
         if (testCountForSnapshot.get() >= 4) {
@@ -246,7 +239,9 @@ public class Broker {
         String clientId = msg.getSenderId();
         updateHeartbeat(clientId);
 
-        boolean newTopicOfInterest = topicSubscribersTable.addClientSubscription(msg.getTopic(), clientId);
+        // Pass durable flag through to the table
+        boolean newTopicOfInterest = topicSubscribersTable.addClientSubscription(
+                msg.getTopic(), clientId, msg.isDurable());
 
         if (newTopicOfInterest) {
             forwardSubscribeMessage(msg.getTopic(), BROKER_ID, null);
@@ -257,23 +252,21 @@ public class Broker {
     }
 
     private void handleBrokerSubscribe(BrokerSubscribeMessage msg) {
-        String senderId = msg.getSenderId();
-        String topic = msg.getTopic();
-        String subbedBrokerId = msg.getInterestedBrokerId(); // original broker which subscribed
+        String senderId      = msg.getSenderId();
+        String topic         = msg.getTopic();
+        String subbedBroker  = msg.getInterestedBrokerId();
         updateHeartbeat(senderId);
 
-        // broker received its subscription message back
-        if (msg.getInterestedBrokerId().equals(BROKER_ID)) {
+        if (subbedBroker.equals(BROKER_ID)) {
             sendAck(senderId, msg.getMessageId());
             return;
         }
 
-        boolean newBrokerSubscription = topicSubscribersTable.addBrokerSubscription(topic, subbedBrokerId, senderId);
+        boolean newBrokerSubscription = topicSubscribersTable.addBrokerSubscription(topic, subbedBroker, senderId);
 
         if (newBrokerSubscription)
-            forwardSubscribeMessage(topic, subbedBrokerId, senderId);
+            forwardSubscribeMessage(topic, subbedBroker, senderId);
 
-        // send an acknowledgment to the broker
         sendAck(senderId, msg.getMessageId());
     }
 
@@ -367,38 +360,60 @@ public class Broker {
         sendAck(brokerId, msg.getMessageId());
     }
 
+    /**
+     * Deliver a publish message to all interested clients and brokers.
+     *
+     * For clients:
+     *   - ONLINE           -> send directly via their handler
+     *   - OFFLINE + durable -> buffer in OfflineMessageStore for delivery on reconnect
+     *   - OFFLINE + non-durable -> drop (original behaviour)
+     */
     private void forwardPublishMessage(PublishMessage msg) {
         String topic = msg.getTopic();
-        Set<String> interestedClients = topicSubscribersTable.getInterestedClients(topic);
+        Set<String> interestedClients         = topicSubscribersTable.getInterestedClients(topic);
         Set<String> interestedBrokersNextHops = topicSubscribersTable.getNextHopOfInterestedBrokers(topic);
 
+        // Forward to peer brokers (unchanged)
         if (!interestedBrokersNextHops.isEmpty()) {
             long brokerSeqNum = brokerCounter.incrementAndGet();
-            long currentTime = System.currentTimeMillis();
+            long currentTime  = System.currentTimeMillis();
             BrokerPublishMessage brokerMsg = new BrokerPublishMessage(BROKER_ID, brokerSeqNum, currentTime, msg);
 
-            // todo create a proper ackTracker for the broker? track them as normal messages?
             ackTracker.trackDelivery(brokerMsg, interestedBrokersNextHops);
 
-            for (String interestedBrokerId : interestedBrokersNextHops) {
-                BrokerHandler handler = connectionRegistry.getBrokerHandler(interestedBrokerId);
+            for (String nextHop : interestedBrokersNextHops) {
+                BrokerHandler handler = connectionRegistry.getBrokerHandler(nextHop);
                 if (handler != null)
                     handler.send(brokerMsg);
             }
         }
 
+        // Forward to local clients
         if (!interestedClients.isEmpty()) {
             ackTracker.trackDelivery(msg, interestedClients);
 
-            for (String interestedClientId : interestedClients) {
-                ClientHandler handler = connectionRegistry.getClientHandler(interestedClientId);
-                if (handler != null)
+            for (String clientId : interestedClients) {
+                ClientHandler handler = connectionRegistry.getClientHandler(clientId);
+
+                if (handler != null) {
+                    // Client is online: deliver directly
                     handler.send(msg);
+                } else if (topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
+                    // Client is offline but durable: buffer for later delivery
+                    System.out.println("[OfflineStore] Buffering message "
+                            + msg.getMessageId() + " for offline client " + clientId);
+                    try {
+                        offlineStore.enqueue(clientId, msg);
+                    } catch (Exception e) {
+                        System.err.println("[OfflineStore] Failed to buffer message for "
+                                + clientId + ": " + e.getMessage());
+                    }
+                }
+                // Non-durable offline client: message is dropped (original behaviour)
             }
         }
     }
 
-    // TODO review if a proper broker ack tracker get created
     void handleAcknowledgement(AckMessage msg) {
         String senderId = msg.getSenderId();
         updateHeartbeat(senderId);
@@ -413,7 +428,9 @@ public class Broker {
             handler.updateHeartbeat();
     }
 
-    // -----------------------------------------------------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Heartbeat checker
+    // ------------------------------------------------------------------
 
     private void startHeartbeatChecker() {
         scheduler.scheduleAtFixedRate(this::checkHeartbeats, 0, HEARTBEAT_CHECK_INTERVAL_MS, TimeUnit.MILLISECONDS);
@@ -428,6 +445,10 @@ public class Broker {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Retry scheduler
+    // ------------------------------------------------------------------
+
     private void startRetryScheduler() {
         scheduler.scheduleAtFixedRate(this::retryExpiredMessages, 0, RETRY_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
@@ -437,6 +458,8 @@ public class Broker {
 
         // resend unacked messages to brokers and clients
         for (PendingMessage pending : expiredMessages) {
+            // Skip messages already fully acknowledged
+            if (pending.isFullyAcknowledged()) continue;
 
             pending.resetTimestamp(); // update message sent time
 
@@ -444,10 +467,16 @@ public class Broker {
                 ConnectionHandler handler = connectionRegistry.getConnectionHandler(subscriberId);
                 if (handler != null) {
                     handler.send(pending.getMessage());
+                    // If offline, the OfflineMessageStore already holds the message;
+                    // deliverOfflineMessages() will push it on reconnect.
                 }
             }
         }
     }
+
+    // ------------------------------------------------------------------
+    // ACK helpers
+    // ------------------------------------------------------------------
 
     void sendAck(String nodeId, String msgId) {
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(nodeId);
@@ -464,8 +493,52 @@ public class Broker {
         return new AckMessage(BROKER_ID, brokerSeqNum, currentTime, msgId);
     }
 
+    // ------------------------------------------------------------------
+    // Client lifecycle
+    // ------------------------------------------------------------------
+
+    /**
+     * Called by ClientHandler when a client connects (first time or reconnect).
+     * On reconnect: updates the handler and delivers any buffered offline messages.
+     */
     public void addClientToRegistry(String clientId, ClientHandler handler) {
-        connectionRegistry.registerClient(clientId, handler);
+        boolean isReconnect = connectionRegistry.isKnownClient(clientId);
+        connectionRegistry.registerClient(clientId, handler); // always replaces stale handler
+
+        if (isReconnect) {
+            System.out.println("Client " + clientId + " reconnected. Delivering offline messages…");
+            deliverOfflineMessages(clientId);
+        } else {
+            System.out.println("Client " + clientId + " connected for the first time.");
+        }
+    }
+
+    /**
+     * Drain the OfflineMessageStore for this client and push all buffered
+     * messages down the freshly re-established connection.
+     * Also resets AckTracker timestamps to prevent immediate double-delivery
+     * from the retry scheduler.
+     */
+    private void deliverOfflineMessages(String clientId) {
+        try {
+            List<PublishMessage> backlog = offlineStore.drain(clientId);
+            if (backlog.isEmpty()) return;
+
+            System.out.println("[OfflineStore] Delivering " + backlog.size()
+                    + " buffered messages to " + clientId);
+
+            ClientHandler handler = connectionRegistry.getClientHandler(clientId);
+            if (handler == null) return; // client disconnected again immediately
+
+            for (PublishMessage msg : backlog)
+                handler.send(msg);
+
+            // Reset retry timers so the scheduler doesn't re-send before the client ACKs
+            ackTracker.resetTimestampsForSubscriber(clientId);
+
+        } catch (Exception e) {
+            System.err.println("Error delivering offline messages to " + clientId + ": " + e.getMessage());
+        }
     }
 
     public void addPeerToRegistry(String brokerId, BrokerHandler handler) {
@@ -476,9 +549,14 @@ public class Broker {
     // TODO: Broker will track ACK from a client that never exists
 
     // TODO: hint from Boglio: add inside disconnectClient an UnsubscribeMessage
+    /**
+     * Called by ClientHandler on TCP disconnection.
+     * Marks the client offline (keeps the record for durable subscriptions)
+     * and removes only non-durable subscriptions.
+     */
     public void onClientDisconnection(String clientId) {
-        if (connectionRegistry.isClientConnected(clientId))
-            connectionRegistry.disconnectClient(clientId);
+        connectionRegistry.markClientOffline(clientId);               // keep record, drop handler
+        topicSubscribersTable.removeNonDurableSubscriptions(clientId); // clean non-durable subs
     }
 
     /* TODO add updated topic subscriber table to snapshot and maybe
@@ -487,40 +565,41 @@ public class Broker {
         On crash cleanup → removeBrokersByNextHop, let the refresh rebuild the paths naturally
      */
     public void onBrokerDisconnection(String brokerId) {
-        // TODO how to proceed at broker disconnection?
         if (connectionRegistry.isBrokerConnected(brokerId))
             connectionRegistry.disconnectBroker(brokerId);
     }
 
+    // ------------------------------------------------------------------
+    // Snapshot
+    // ------------------------------------------------------------------
+
     // todo add brokers info in snapshot
-    /* todo takeSnapshot and onMessageReceived could run at the same time, so the snapshot could lose some messages
-       we could lock the structure needed in snapshot and message received */
+    // todo takeSnapshot and onMessageReceived could run at the same time, so the snapshot could lose some message
+    //      we could lock the structure needed in snapshot and message received
     private synchronized void takeSnapshot() throws Exception {
         List<Message> snapshotState = new java.util.ArrayList<>();
         long currentTime = System.currentTimeMillis();
 
         // Saving Subscribe Table
-
         for (String topic : topicSubscribersTable.getTopics()) {
             for (String clientId : topicSubscribersTable.getInterestedClients(topic)) {
-                SubscribeMessage subMsg = new SubscribeMessage(
-                        clientId,
-                        0,
-                        currentTime,
-                        topic
-                );
-                snapshotState.add(subMsg);
+                // Persist the durable flag so recovery restores it correctly
+                boolean durable = topicSubscribersTable.isDurableSubscriber(clientId, topic);
+                snapshotState.add(new SubscribeMessage(clientId, 0, currentTime, topic, durable));
             }
         }
 
         // Saving Pending Messages
-
         for (PendingMessage pending : ackTracker.getPendingMessages()) {
             snapshotState.add(pending.getMessage());
         }
 
         wal.snapshot(snapshotState);
     }
+
+    // ------------------------------------------------------------------
+    // Broker-to-broker topic sharing
+    // ------------------------------------------------------------------
 
     private void shareTopicSubscribers(BrokerHandler handler) {
         topicSubscribersTable.getTopics().forEach(topic -> {

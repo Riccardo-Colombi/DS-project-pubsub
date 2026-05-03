@@ -7,6 +7,7 @@ import it.polimi.pubsub.network.TcpConnection;
 import java.io.IOException;
 import java.net.Socket;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -14,19 +15,24 @@ import java.util.concurrent.atomic.AtomicLong;
 public class Client implements Publisher, Subscriber {
 
     private static final long HEARTBEAT_INTERVAL_MS = 3000;
-    private static final long ACK_TIMEOUT_MS = 5000;
-    private static final long RETRY_INTERVAL_MS = 2000;
+    private static final long ACK_TIMEOUT_MS        = 5000;
+    private static final long RETRY_INTERVAL_MS     = 2000;
 
     private final String clientId;
     private final String brokerHost;
-    private final int brokerPort;
+    private final int    brokerPort;
 
-    private TcpConnection connection;
-    private ExecutorService executor;
+    // Topics for which this client has a durable subscription.
+    // Survives connect/disconnect cycles so we can re-subscribe on reconnect.
+    private final Set<String> durableTopics = ConcurrentHashMap.newKeySet();
+
+    private TcpConnection            connection;
+    private ExecutorService          executor;
     private ScheduledExecutorService scheduler;
-    private final AtomicBoolean running = new AtomicBoolean(false);
-    private final AtomicBoolean disconnected = new AtomicBoolean(false);
-    private final AtomicLong sequenceCounter = new AtomicLong(0);
+
+    private final AtomicBoolean running         = new AtomicBoolean(false);
+    private final AtomicBoolean disconnected    = new AtomicBoolean(false);
+    private final AtomicLong sequenceCounter    = new AtomicLong(0);
 
     private final BlockingQueue<Message> outQueue = new LinkedBlockingQueue<>();
 
@@ -34,10 +40,14 @@ public class Client implements Publisher, Subscriber {
     private final ConcurrentHashMap<String, ClientPendingMessage> pendingMessages = new ConcurrentHashMap<>();
 
     public Client(String clientId, String brokerHost, int brokerPort) {
-        this.clientId = clientId;
+        this.clientId   = clientId;
         this.brokerHost = brokerHost;
         this.brokerPort = brokerPort;
     }
+
+    // ------------------------------------------------------------------
+    // Connection lifecycle
+    // ------------------------------------------------------------------
 
     public void connect() throws Exception {
         Socket socket = new Socket(brokerHost, brokerPort);
@@ -52,8 +62,17 @@ public class Client implements Publisher, Subscriber {
 
         executor.submit(this::readLoop);
         executor.submit(this::writeLoop);
+
+        // Send a heartbeat immediately so the broker registers this client's ID
+        // without waiting for the first application message.
+        sendHeartbeat();
+
         startHeartbeat();
         startRetryScheduler();
+
+        // Re-subscribe durable topics on reconnect so the broker resumes direct
+        // routing and knows the client is back online.
+        resubscribeDurableTopics();
 
         System.out.println("Connected to broker at " + brokerHost + ":" + brokerPort);
     }
@@ -71,6 +90,10 @@ public class Client implements Publisher, Subscriber {
         }
     }
 
+    // ------------------------------------------------------------------
+    // I/O loops
+    // ------------------------------------------------------------------
+
     private void readLoop() {
         try {
             while (running.get()) {
@@ -85,11 +108,11 @@ public class Client implements Publisher, Subscriber {
             }
         }  catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("Thread interrupted: " + e.getMessage());
         }  catch (JsonProcessingException e) {
             System.out.println("Deserialization error: " + e.getMessage());
         } catch (IOException e) {
-            System.out.println("Connection lost: " + e.getMessage());
+            if (running.get())
+                System.out.println("Connection lost: " + e.getMessage());
         } catch (Exception e) {
             System.out.println("Generic error: " + e.getMessage());
         } finally {
@@ -114,18 +137,21 @@ public class Client implements Publisher, Subscriber {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Heartbeat & retry
+    // ------------------------------------------------------------------
+
     private void startHeartbeat() {
         scheduler.scheduleAtFixedRate(this::sendHeartbeat, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
-    // todo maybe remove sequence number from heartbeat
     private void sendHeartbeat() {
-        HeartbeatMessage heartbeat = new HeartbeatMessage(clientId, 0, System.currentTimeMillis());
-        enqueue(heartbeat);
+        enqueue(new HeartbeatMessage(clientId, 0, System.currentTimeMillis()));
     }
 
     private void startRetryScheduler() {
-        scheduler.scheduleAtFixedRate(this::retryExpiredMessages, RETRY_INTERVAL_MS, RETRY_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(this::retryExpiredMessages,
+                RETRY_INTERVAL_MS, RETRY_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
     private void retryExpiredMessages() {
@@ -138,6 +164,21 @@ public class Client implements Publisher, Subscriber {
             }
         }
     }
+
+    // ------------------------------------------------------------------
+    // Durable reconnect
+    // ------------------------------------------------------------------
+
+    private void resubscribeDurableTopics() {
+        for (String topic : durableTopics) {
+            System.out.println("Re-subscribing durable topic after reconnect: " + topic);
+            sendSubscribeMessage(topic, true);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Incoming message handling
+    // ------------------------------------------------------------------
 
     private void handleMessage(Message msg) throws Exception {
         switch (msg.getType()) {
@@ -166,6 +207,10 @@ public class Client implements Publisher, Subscriber {
         enqueue(ack);
     }
 
+    // ------------------------------------------------------------------
+    // Outbound helpers
+    // ------------------------------------------------------------------
+
     private void enqueue(Message msg) {
         try {
             outQueue.put(msg);
@@ -174,7 +219,17 @@ public class Client implements Publisher, Subscriber {
         }
     }
 
-    // --- Publisher ---
+    private void sendSubscribeMessage(String topic, boolean durable) {
+        long seqNum = sequenceCounter.incrementAndGet();
+        SubscribeMessage msg = new SubscribeMessage(clientId, seqNum,
+                System.currentTimeMillis(), topic, durable);
+        enqueue(msg);
+        pendingMessages.put(msg.getMessageId(), new ClientPendingMessage(msg, brokerHost));
+    }
+
+    // ------------------------------------------------------------------
+    // Publisher
+    // ------------------------------------------------------------------
 
     @Override
     public void publish(String topic, byte[] payload) {
@@ -184,20 +239,30 @@ public class Client implements Publisher, Subscriber {
         pendingMessages.put(msg.getMessageId(), new ClientPendingMessage(msg, brokerHost));
     }
 
-    // --- Subscriber ---
+    // ------------------------------------------------------------------
+    // Subscriber
+    // ------------------------------------------------------------------
 
     @Override
     public void subscribe(String topic) {
-        long seqNum = sequenceCounter.incrementAndGet();
-        SubscribeMessage msg = new SubscribeMessage(clientId, seqNum, System.currentTimeMillis(), topic);
-        enqueue(msg);
-        pendingMessages.put(msg.getMessageId(), new ClientPendingMessage(msg, brokerHost));
+        sendSubscribeMessage(topic, false);
+    }
+
+    /**
+     * Subscribe with durability: the broker buffers messages while this client
+     * is offline and delivers them on reconnect.
+     */
+    public void subscribeDurable(String topic) {
+        durableTopics.add(topic);
+        sendSubscribeMessage(topic, true);
     }
 
     @Override
     public void unsubscribe(String topic) {
+        durableTopics.remove(topic); // stop re-subscribing on future reconnects
         long seqNum = sequenceCounter.incrementAndGet();
-        UnsubscribeMessage msg = new UnsubscribeMessage(clientId, seqNum, System.currentTimeMillis(), topic);
+        UnsubscribeMessage msg = new UnsubscribeMessage(clientId, seqNum,
+                System.currentTimeMillis(), topic);
         enqueue(msg);
         pendingMessages.put(msg.getMessageId(), new ClientPendingMessage(msg, brokerHost));
     }

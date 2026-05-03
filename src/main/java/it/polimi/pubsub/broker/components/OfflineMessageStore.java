@@ -8,7 +8,6 @@ import it.polimi.pubsub.messages.PublishMessage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,12 +19,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Persistence strategy:
  *   One JSON file per client: <baseDir>/<clientId>.json
- *   The file contains a JSON array of serialised PublishMessage objects.
  *   Writes are atomic (write to .tmp, then rename) to survive broker crashes.
  *
- * This class is thread-safe: all public methods synchronise on the per-client lock
- * stored in `locks`. This avoids a global lock while still being safe under concurrent
- * access from the retry scheduler and the message-dispatch thread.
+ * Thread-safety: all public methods synchronise on a per-client lock to avoid
+ * a global bottleneck while still being safe under concurrent access.
  */
 public class OfflineMessageStore {
 
@@ -48,7 +45,10 @@ public class OfflineMessageStore {
         }
     }
 
-    // Public methods
+    // ------------------------------------------------------------------
+    // Public API
+    // ------------------------------------------------------------------
+
     /**
      * Buffer a message for a client that is currently offline.
      * The message is appended to the in-memory queue and immediately flushed to disk.
@@ -74,18 +74,6 @@ public class OfflineMessageStore {
         }
     }
 
-    /**
-     * Remove a specific message from the queue (e.g. after the broker receives the ACK
-     * while the client is reconnecting and the message was already re-sent).
-     */
-    public void remove(String clientId, String messageId) throws IOException {
-        synchronized (lockFor(clientId)) {
-            LinkedList<PublishMessage> queue = queueFor(clientId);
-            boolean changed = queue.removeIf(m -> m.getMessageId().equals(messageId));
-            if (changed) flush(clientId);
-        }
-    }
-
     /** True if there are buffered messages for this client. */
     public boolean hasPending(String clientId) {
         synchronized (lockFor(clientId)) {
@@ -95,7 +83,8 @@ public class OfflineMessageStore {
     }
 
     /**
-     * Load all queues from disk. Call once at broker startup (before accepting connections).
+     * Load all per-client queues from disk.
+     * Must be called once at broker startup before accepting connections.
      */
     public void recover() throws IOException {
         File[] files = baseDir.listFiles((dir, name) -> name.endsWith(".json"));
@@ -119,7 +108,10 @@ public class OfflineMessageStore {
         }
     }
 
+    // ------------------------------------------------------------------
     // Private helpers
+    // ------------------------------------------------------------------
+
     private LinkedList<PublishMessage> queueFor(String clientId) {
         return queues.computeIfAbsent(clientId, k -> new LinkedList<>());
     }

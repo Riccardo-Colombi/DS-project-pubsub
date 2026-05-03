@@ -54,6 +54,21 @@ public class AckTracker {
         return expired;
     }
 
+    /**
+     * Reset the retry timer for every pending message that still expects an ACK
+     * from the given subscriber.
+     *
+     * Called right after delivering the offline backlog to a reconnected client
+     * so the retry scheduler does not fire again before the client has had a
+     * chance to ACK the freshly delivered messages (which would cause double delivery).
+     */
+    public void resetTimestampsForSubscriber(String subscriberId) {
+        for (PendingMessage pending : unackedMessages.values()) {
+            if (pending.getPendingSubscribers().contains(subscriberId))
+                pending.resetTimestamp();
+        }
+    }
+
     public java.util.Collection<PendingMessage> getPendingMessages() {
         return unackedMessages.values();
     }
