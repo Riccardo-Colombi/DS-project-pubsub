@@ -32,6 +32,12 @@ public class multipleBrokerRun {
         subscriber.subscribe("news");
         Thread.sleep(500);
 
-        publisher.publish("news", "hello".getBytes());
+        publisher.publish("news", "hello1".getBytes());
+        Thread.sleep(500);
+
+        subscriber.unsubscribe("news");
+        Thread.sleep(500);
+
+        publisher.publish("news", "hello2".getBytes());
     }
 }
