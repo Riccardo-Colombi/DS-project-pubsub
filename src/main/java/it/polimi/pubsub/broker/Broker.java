@@ -57,6 +57,7 @@ public class Broker {
     private static final long RETRY_INTERVAL_MS           = 2000;
     private static final long HEARTBEAT_TIMEOUT_MS        = 10000;
     private static final long HEARTBEAT_CHECK_INTERVAL_MS = 3000;
+    private static final long HEARTBEAT_INTERVAL_MS       = 3000;
     private static final long CACHE_LIFETIME              = 2;
 
 
@@ -82,6 +83,7 @@ public class Broker {
 
     public void run() {
         try {
+            startHeartbeat();
             startHeartbeatChecker();
             startRetryScheduler();
             executor.submit(this::runClientListener);
@@ -123,6 +125,8 @@ public class Broker {
                     socket.setSoTimeout(0);              // remove timeout for normal ops
                     handler.start();                     // readLoop/writeLoop now safe
                     shareTopicSubscribers(handler);      // nodeId is guaranteed non-null
+
+                    System.out.println(BROKER_ID + " connected to " + handler.getNodeId());
                 } catch (Exception e) {
                     System.err.println("Handshake failed, rejecting connection: " + e.getMessage());
                     conn.close(); // don't let a bad peer into the system
@@ -144,6 +148,8 @@ public class Broker {
         socket.setSoTimeout(0);
         handler.start();
         shareTopicSubscribers(handler);
+
+        System.out.println(BROKER_ID + " connected to " + handler.getNodeId());
     }
 
     private void recoverState() throws Exception {
@@ -189,8 +195,8 @@ public class Broker {
             testCountForSnapshot.incrementAndGet();
             wal.append(message);
 
-            System.out.println("Message received - " +
-                    "message ID: " + message.getSequenceNumber() +
+            System.out.println("Message received - " + "Broker: " + BROKER_ID +
+                    ", message ID: " + message.getSequenceNumber() +
                     ", sender ID: " + message.getSenderId() +
                     ", message type: " + message.getType());
         }
@@ -424,8 +430,25 @@ public class Broker {
     public void updateHeartbeat(String senderId) {
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(senderId);
 
-        if (handler != null)
+        if (handler != null) {
             handler.updateHeartbeat();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Heartbeat
+    // ------------------------------------------------------------------
+
+    private void startHeartbeat() {
+        scheduler.scheduleAtFixedRate(this::sendHeartbeat, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void sendHeartbeat() {
+        HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis());
+
+        for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
+            handler.send(hm);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -555,8 +578,19 @@ public class Broker {
      * and removes only non-durable subscriptions.
      */
     public void onClientDisconnection(String clientId) {
-        connectionRegistry.markClientOffline(clientId);               // keep record, drop handler
-        topicSubscribersTable.removeNonDurableSubscriptions(clientId); // clean non-durable subs
+        // keep record, drop handler
+        connectionRegistry.markClientOffline(clientId);
+
+        // clean non-durable subs
+        for (String topic : topicSubscribersTable.getNonDurableSubscriptions(clientId)) {
+            boolean removedTopicOfInterest = topicSubscribersTable.removeClientSubscription(topic, clientId);
+
+            if (removedTopicOfInterest) {
+                forwardUnsubscribeMessage(topic, BROKER_ID, null);
+            }
+        }
+
+        // topicSubscribersTable.removeNonDurableSubscriptions(clientId); // clean non-durable subs
     }
 
     /* TODO add updated topic subscriber table to snapshot and maybe

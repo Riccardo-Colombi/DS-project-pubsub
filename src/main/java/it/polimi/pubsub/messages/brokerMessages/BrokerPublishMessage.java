@@ -26,10 +26,12 @@ public class BrokerPublishMessage extends Message {
         return MessageType.BROKER_PUBLISH;
     }
 
+    @JsonIgnore
     public String getOriginalMessageId() {
         return originalMessage.getMessageId();
     }
 
+    @JsonIgnore
     public String getTopic() {
         return originalMessage.getTopic();
     }

@@ -196,6 +196,10 @@ public class TopicSubscribersTable {
         return topics != null && topics.contains(topic);
     }
 
+    public Set<String> getNonDurableSubscriptions(String subscriberId) {
+        return durableSubscriptions.getOrDefault(subscriberId, Collections.emptySet());
+    }
+
     // ------------------------------------------------------------------
     // Inner class
     // ------------------------------------------------------------------

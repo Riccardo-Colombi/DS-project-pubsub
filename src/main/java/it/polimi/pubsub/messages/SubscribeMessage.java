@@ -30,10 +30,10 @@ public class SubscribeMessage extends Message {
         this.durable = durable;
     }
 
-    /** Convenience constructor. Keeps existing callers working (durable = false by default) */
-    public SubscribeMessage(String senderId, long sequenceNumber, long timestamp, String topic) {
-        this(senderId, sequenceNumber, timestamp, topic, false);
-    }
+//    /** Convenience constructor. Keeps existing callers working (durable = false by default) */
+//    public SubscribeMessage(String senderId, long sequenceNumber, long timestamp, String topic) {
+//        this(senderId, sequenceNumber, timestamp, topic, false);
+//    }
 
     public String getTopic() {
         return topic;

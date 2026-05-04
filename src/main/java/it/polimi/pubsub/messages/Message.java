@@ -3,6 +3,7 @@ package it.polimi.pubsub.messages;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import it.polimi.pubsub.messages.brokerMessages.BrokerHelloMessage;
 import it.polimi.pubsub.messages.brokerMessages.BrokerPublishMessage;
 import it.polimi.pubsub.messages.brokerMessages.BrokerSubscribeMessage;
 import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
@@ -21,7 +22,7 @@ import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
         @JsonSubTypes.Type(value = BrokerSubscribeMessage.class, name = "BROKER_SUBSCRIBE"),
         @JsonSubTypes.Type(value = UnsubscribeMessage.class, name = "UNSUBSCRIBE"),
         @JsonSubTypes.Type(value = BrokerUnsubscribeMessage.class, name = "BROKER_UNSUBSCRIBE"),
-        @JsonSubTypes.Type(value = BrokerUnsubscribeMessage.class, name = "BROKER_HELLO"),
+        @JsonSubTypes.Type(value = BrokerHelloMessage.class, name = "BROKER_HELLO"),
         @JsonSubTypes.Type(value = HeartbeatMessage.class, name = "HEARTBEAT"),
         @JsonSubTypes.Type(value = AckMessage.class, name = "ACK")
 })

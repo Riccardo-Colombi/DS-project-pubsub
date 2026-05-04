@@ -74,7 +74,7 @@ public class Client implements Publisher, Subscriber {
         // routing and knows the client is back online.
         resubscribeDurableTopics();
 
-        System.out.println("Connected to broker at " + brokerHost + ":" + brokerPort);
+        System.out.println(clientId + " connected to broker at " + brokerHost + ":" + brokerPort);
     }
 
     public void disconnect() {
@@ -199,7 +199,9 @@ public class Client implements Publisher, Subscriber {
     }
 
     private void handleIncomingPublish(PublishMessage msg) throws Exception {
-        System.out.println("Message received! Topic: " + msg.getTopic() + " Payload: " + new String(msg.getPayload()));
+        System.out.println("Message received! Client: " + clientId +
+                "Topic: " + msg.getTopic() +
+                " Payload: " + new String(msg.getPayload()));
 
         // send ack back to broker
         long seqNum = sequenceCounter.incrementAndGet();
