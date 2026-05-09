@@ -1,6 +1,8 @@
 package it.polimi.pubsub.broker.components;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -191,6 +193,15 @@ public class TopicSubscribersTable {
         return Collections.emptySet();
     }
 
+    public Map<String, String> getInterestedBrokersInfo(String topic) {
+        TopicSubscriptions subscribers = topicSubscribers.get(topic);
+
+        if (subscribers != null)
+            return subscribers.getBrokers();
+
+        return Collections.emptyMap();
+    }
+
     public boolean isDurableSubscriber(String clientId, String topic) {
         Set<String> topics = durableSubscriptions.get(clientId);
         return topics != null && topics.contains(topic);
@@ -235,8 +246,8 @@ public class TopicSubscribersTable {
             return Collections.unmodifiableSet(clients);
         }
 
-        ConcurrentHashMap<String, String> getBrokers() {
-            return brokers;
+        Map<String, String> getBrokers() {
+            return Collections.unmodifiableMap(new HashMap<>(brokers));
         }
 
         Set<String> getInterestedBrokers() {
