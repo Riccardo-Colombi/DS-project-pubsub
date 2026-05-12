@@ -4,20 +4,17 @@ import it.polimi.pubsub.broker.components.BrokerHandler;
 import it.polimi.pubsub.broker.components.*;
 import it.polimi.pubsub.broker.storage.WriteAheadLog;
 import it.polimi.pubsub.messages.*;
-import it.polimi.pubsub.messages.brokerMessages.BrokerPublishMessage;
-import it.polimi.pubsub.messages.brokerMessages.BrokerSubscribeMessage;
-import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
+import it.polimi.pubsub.messages.brokerMessages.*;
 import it.polimi.pubsub.network.TcpConnection;
+import it.polimi.pubsub.broker.states.*;
 
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -28,6 +25,18 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 // State machine for roles LEADER, FOLLOWER, CANDIDATE
 // Add random timout for leader election
 
+// TODO RAFT
+//  state machine for different roles with different management of messages by each role
+//      a follower must redirect clients to the leader
+//      non blocking waits for election and ack wait
+//  once we create a broker he starts as a Leader so he can process messages even by himself
+//  methods for joining a cluster
+//      if cluster composed of 2 brokers instant election of one of them
+//      if composed by more then one check if request was send to a leader, if not redirect
+//  when a broker joins the cluster his information must be send to others broker of the cluster for election purposes
+//  timout for the leader
+//
+
 public class Broker {
 
     private final String BROKER_ID;
@@ -37,7 +46,17 @@ public class Broker {
     private final AckTracker ackTracker;
     private final WriteAheadLog wal;
     private final OfflineMessageStore offlineStore;
-    private final BrokerRole role;
+
+    // Cluster state
+    private volatile BrokerState state;
+    private String clusterId;
+    private volatile int currentTerm;
+    private String currentLeaderId;
+    private String leaderHost;   // host del leader, usato per redirect
+    private int leaderPort;      // port del leader, usato per redirect
+
+    private final ConcurrentHashMap<String, PendingMessage> pendingEntries = new ConcurrentHashMap<>();
+    record ProxyRecord(String clientId, String originMessageId, String proxyMessageId) {}
 
     Cache<String, Boolean> messageCache = Caffeine.newBuilder()
             .maximumSize(10000)
@@ -75,7 +94,7 @@ public class Broker {
         this.executor              = Executors.newCachedThreadPool();
         this.scheduler             = Executors.newScheduledThreadPool(2);
         this.brokerCounter         = new AtomicLong(0);
-        this.role                  = BrokerRole.FOLLOWER;
+        this.state                 = new SoloState(this);
 
         offlineStore.recover();   // load buffered messages from disk before accepting connections
         recoverState();
@@ -137,7 +156,7 @@ public class Broker {
         }
     }
 
-    public void connectToPeer(String brokerHost, int brokerPort) throws Exception {
+    public BrokerHandler connectToPeer(String brokerHost, int brokerPort) throws Exception{
         Socket socket = new Socket(brokerHost, brokerPort);
         socket.setSoTimeout(5000);
 
@@ -150,6 +169,7 @@ public class Broker {
         shareTopicSubscribers(handler);
 
         System.out.println(BROKER_ID + " connected to " + handler.getNodeId());
+        return handler;
     }
 
     private void recoverState() throws Exception {
@@ -201,7 +221,7 @@ public class Broker {
                     ", message type: " + message.getType());
         }
 
-        dispatchMessage(message);
+        state.onMessageReceived(message);
 
         // todo not atomic, multiple thread could read 4 at almost the same time and take multiple snapshot (probably creating problems)
         if (testCountForSnapshot.get() >= 4) {
@@ -210,7 +230,7 @@ public class Broker {
         }
     }
 
-    private void dispatchMessage(Message message) throws Exception {
+    public void dispatchMessage(Message message) throws Exception {
         switch (message.getType()) {
             case SUBSCRIBE:
                 handleSubscribe((SubscribeMessage) message);
@@ -235,6 +255,15 @@ public class Broker {
                 break;
             case HEARTBEAT:
                 updateHeartbeat(message.getSenderId());
+                break;
+            case JOIN_CLUSTER:
+                state.onMessageReceived(message);   // delega allo stato corrente
+                break;
+            case JOIN_CLUSTER_ACK:
+                handleJoinClusterAck((JoinClusterAckMessage) message);
+                break;
+            case REDIRECT_TO_LEADER:
+                handleRedirectToLeader((RedirectToLeaderMessage) message);
                 break;
             default:
                 System.err.println("Unknown message type received.");
@@ -402,20 +431,25 @@ public class Broker {
                 ClientHandler handler = connectionRegistry.getClientHandler(clientId);
 
                 if (handler != null) {
-                    // Client is online: deliver directly
                     handler.send(msg);
-                } else if (topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
-                    // Client is offline but durable: buffer for later delivery
-                    System.out.println("[OfflineStore] Buffering message "
-                            + msg.getMessageId() + " for offline client " + clientId);
-                    try {
-                        offlineStore.enqueue(clientId, msg);
-                    } catch (Exception e) {
-                        System.err.println("[OfflineStore] Failed to buffer message for "
-                                + clientId + ": " + e.getMessage());
+                } else {
+                    // Cerca se il client è su un broker remoto
+                    BrokerHandler brokerHandler = connectionRegistry.findBrokerForClient(clientId);
+                    if (brokerHandler != null) {
+                        long brokerSeqNum = brokerCounter.incrementAndGet();
+                        BrokerPublishMessage brokerMsg = new BrokerPublishMessage(
+                                BROKER_ID, brokerSeqNum, System.currentTimeMillis(), msg);
+                        ackTracker.trackDelivery(brokerMsg,
+                                Collections.singleton(brokerHandler.getNodeId()));
+                        brokerHandler.send(brokerMsg);
+                    } else if (topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
+                        try {
+                            offlineStore.enqueue(clientId, msg);
+                        } catch (Exception e) {
+                            System.err.println("[OfflineStore] Failed to buffer: " + e.getMessage());
+                        }
                     }
                 }
-                // Non-durable offline client: message is dropped (original behaviour)
             }
         }
     }
@@ -443,7 +477,7 @@ public class Broker {
         scheduler.scheduleAtFixedRate(this::sendHeartbeat, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
-    private void sendHeartbeat() {
+    public void sendHeartbeat() {
         HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis());
 
         for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
@@ -501,7 +535,7 @@ public class Broker {
     // ACK helpers
     // ------------------------------------------------------------------
 
-    void sendAck(String nodeId, String msgId) {
+    public void sendAck(String nodeId, String msgId) {
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(nodeId);
 
         if (handler != null) {
@@ -658,4 +692,247 @@ public class Broker {
             });
         });
     }
+
+    // ------------------------------------------------------------------
+    // Cluster lifecycle
+    // ------------------------------------------------------------------
+
+    /**
+     * Il broker SOLO crea un nuovo cluster e diventa LEADER.
+     */
+
+    public void createCluster() {
+
+        // Controllo se sono nello state SOLO
+
+        if (state.getRole() != BrokerRole.SOLO) {
+            System.err.println("createCluster() chiamato su un broker che non è SOLO (ruolo attuale: " + state.getRole() + ")");
+            return;
+        }
+
+        // Creazione cluster
+
+        this.clusterId = java.util.UUID.randomUUID().toString();
+        this.currentTerm = 1;
+        this.currentLeaderId = BROKER_ID;
+        this.leaderHost = null; // sono io il LEADER
+        this.leaderPort = -1; // sono io il LEADER
+
+        // Cambio state in LEADER
+
+        this.state = new LeaderState(this);
+        System.out.println(BROKER_ID + " ha creato il cluster " + clusterId + " — term=" + currentTerm + ", ruolo=LEADER");
+    }
+
+    /**
+     * Il broker SOLO si connette al leader e diventa FOLLOWER.
+     * Se il nodo contattato non è il leader, segue il redirect automaticamente.
+     */
+
+    public void joinCluster(String host, int port) throws Exception {
+
+        // Controllo se sono nello state SOLO
+
+        if (state.getRole() != BrokerRole.SOLO) {
+            System.err.println("joinCluster() chiamato su un broker che non è SOLO (ruolo attuale: " + state.getRole() + ")");
+            return;
+        }
+
+        // Apro connessione con il Broker LEADER
+
+        BrokerHandler handler = connectToPeer(host, port);
+
+        // Invia la richiesta di join al nodo appena connesso
+
+        long seq = brokerCounter.incrementAndGet();
+        JoinClusterMessage joinMsg = new JoinClusterMessage(BROKER_ID, seq, System.currentTimeMillis());
+        handler.send(joinMsg);
+
+        System.out.println(BROKER_ID + " ha inviato JoinClusterMessage a " + host + ":" + port);
+    }
+
+    /**
+     * Chiamato da LeaderState quando arriva un JoinClusterMessage.
+     */
+
+    public void handleJoinClusterRequest(JoinClusterMessage msg) {
+
+        System.out.println( "Handling Join request from:" + msg.getSenderId() + "recived by" + this.BROKER_ID);
+
+        String requesterId = msg.getSenderId();
+
+        // Se non sono il leader, mando un redirect (non dovrebbe succedere se joinCluster() è usato correttamente)
+
+        if (!BROKER_ID.equals(currentLeaderId)) {
+            long seq = brokerCounter.incrementAndGet();
+            RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(BROKER_ID, seq, System.currentTimeMillis(), leaderHost, leaderPort);
+            sendAck(requesterId, msg.getMessageId());
+            connectionRegistry.getConnectionHandler(requesterId).send(redirect);
+            return;
+
+            // TODO Manage redirect message on the sender broker
+
+        }
+
+        // Se sono il LEADER rispondo con i dati del cluster
+
+        // TODO doing this I will also send the brokers that are not in the cluster,
+        //  is this right?
+
+        List<String> peers = connectionRegistry.getConnectedBrokerHandlers()
+                .stream()
+                .map(BrokerHandler::getNodeId)
+                .filter(id -> !id.equals(requesterId))
+                .collect(java.util.stream.Collectors.toList());
+
+        long seq = brokerCounter.incrementAndGet();
+        JoinClusterAckMessage joinAck = new JoinClusterAckMessage(
+                BROKER_ID, seq, System.currentTimeMillis(),
+                clusterId, currentTerm, peers,
+                "localhost",  // o this.brokerHost se lo aggiungi come campo
+                BROKER_PORT
+        );
+        connectionRegistry.getConnectionHandler(requesterId).send(joinAck);
+
+        System.out.println(BROKER_ID + " ha accettato " + requesterId + " nel cluster " + clusterId);
+    }
+
+    /**
+     * Chiamato da dispatchMessage() quando arriva un JoinClusterAckMessage.
+     * Completa la transizione SOLO → FOLLOWER.
+     */
+
+    private void handleJoinClusterAck(JoinClusterAckMessage msg) {
+        this.clusterId       = msg.getClusterId();
+        this.currentTerm     = msg.getCurrentTerm();
+        this.currentLeaderId = msg.getSenderId();
+        this.state           = new FollowerState(this);
+
+        this.leaderHost = msg.getLeaderHost();
+        this.leaderPort = msg.getLeaderPort();
+
+        System.out.println(BROKER_ID + " joined cluster " + clusterId
+                + " — term=" + currentTerm + ", leader=" + currentLeaderId + ", role=FOLLOWER");
+    }
+
+    /**
+     * Chiamato da dispatchMessage() quando il nodo contattato non era il leader.
+     * Riprova automaticamente sul leader reale.
+     */
+
+    private void handleRedirectToLeader(RedirectToLeaderMessage msg) throws Exception {
+        System.out.println(BROKER_ID + " rediretto al leader " + msg.getLeaderHost() + ":" + msg.getLeaderPort());
+        joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
+    }
+
+    /**
+     * Usato da FollowerState per redirigere un PUBLISH al leader.
+     */
+//    public void redirectToLeader(Message message) {
+//        ConnectionHandler leaderHandler = connectionRegistry.getConnectionHandler(currentLeaderId);
+//        if (leaderHandler != null) {
+//            leaderHandler.send(message);
+//        } else {
+//            System.err.println("redirectToLeader: leader " + currentLeaderId + " non raggiungibile");
+//        }
+//    }
+
+//    public String proxyToLeader(Message message) {
+//        ConnectionHandler leaderHandler = connectionRegistry.getConnectionHandler(currentLeaderId);
+//        if (leaderHandler == null) {
+//            System.err.println("proxyToLeader: leader " + currentLeaderId + " non raggiungibile");
+//            return null;
+//        }
+//
+//        long seq = brokerCounter.incrementAndGet();
+//        ProxyMessage proxy = new ProxyMessage(BROKER_ID, seq, System.currentTimeMillis(),
+//                message.getSenderId(), BROKER_ID, message);
+//        leaderHandler.send(proxy);
+//        return proxy.getMessageId();
+//    }
+//
+//    public void handleProxyMessage(ProxyMessage msg) throws Exception {
+//        String proxyBrokerId  = msg.getProxyBrokerId();
+//        String originClientId = msg.getOriginClientId();
+//        Message inner         = msg.getInnerMessage();
+//
+//        // Registra che questo client è raggiungibile tramite proxyBrokerId
+//        connectionRegistry.registerRemoteClient(originClientId, proxyBrokerId);
+//
+//        dispatchMessage(inner);
+//        sendAck(proxyBrokerId, msg.getMessageId());
+//    }
+//
+//    public void replicateToFollowers(Message message, String originClientId,
+//                                     String originMessageId, String proxyBrokerId,
+//                                     String proxyMessageId) {
+//        Collection<BrokerHandler> followers = connectionRegistry.getConnectedBrokerHandlers();
+//        int majority = (followers.size() + 1) / 2 + 1;
+//
+//        long seq = brokerCounter.incrementAndGet();
+//        AppendEntryMessage appendEntry = new AppendEntryMessage(
+//                BROKER_ID, seq, System.currentTimeMillis(),
+//                message, currentTerm, 0L);
+//
+//        PendingMessage pending = new PendingMessage(
+//                message, originClientId, originMessageId, proxyBrokerId, proxyMessageId, majority);
+//        pending.addAckAndCheckMajority(BROKER_ID);
+//        pendingEntries.put(appendEntry.getMessageId(), pending);
+//
+//        for (BrokerHandler handler : followers) {
+//            handler.send(appendEntry);
+//        }
+//
+//        checkAndCommit(appendEntry.getMessageId(), pending);
+//    }
+//
+//    public void handleAppendEntryAck(AppendEntryAckMessage msg) {
+//        String entryId = msg.getEntryMessageId();
+//        PendingMessage pending = pendingEntries.get(entryId);
+//        if (pending == null) return; // già committato
+//
+//        boolean majority = pending.addAckAndCheckMajority(msg.getSenderId());
+//        if (majority) {
+//            checkAndCommit(entryId, pending);
+//        }
+//    }
+//
+//    private void checkAndCommit(String appendEntryId, PendingMessage pending) {
+//        // remove è atomico: solo il primo thread che lo chiama procede
+//        if (pendingEntries.remove(appendEntryId, pending)) {
+//            try {
+//                commitEntry(pending);
+//            } catch (Exception e) {
+//                System.err.println("Commit failed: " + e.getMessage());
+//            }
+//        }
+//    }
+//
+//    private void commitEntry(PendingMessage pending) throws Exception {
+//        dispatchMessage(pending.getMessage());
+//
+//        if (pending.getOriginClientId() != null) {
+//            if (connectionRegistry.getConnectionHandler(pending.getOriginClientId()) != null) {
+//                sendAck(pending.getOriginClientId(), pending.getOriginMessageId());
+//            } else {
+//                // usa proxyMessageId: il FollowerState lo trova in pendingProxies
+//                sendAck(pending.getProxyBrokerId(), pending.getProxyMessageId());
+//            }
+//        }
+//    }
+//
+//    public void appendToWal(Message message) throws Exception {
+//        wal.append(message);
+//    }
+//
+//    public void sendAppendEntryAck(AppendEntryMessage appendEntry) {
+//        long seq = brokerCounter.incrementAndGet();
+//        AppendEntryAckMessage ack = new AppendEntryAckMessage(
+//                BROKER_ID, seq, System.currentTimeMillis(),
+//                appendEntry.getMessageId(), currentTerm);
+//        ConnectionHandler leaderHandler = connectionRegistry.getConnectionHandler(appendEntry.getSenderId());
+//        if (leaderHandler != null) {
+//            leaderHandler.send(ack);
+//        }
+//    }
 }
