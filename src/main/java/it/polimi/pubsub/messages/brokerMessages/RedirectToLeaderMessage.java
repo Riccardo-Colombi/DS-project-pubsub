@@ -11,6 +11,7 @@ public class RedirectToLeaderMessage extends Message {
 
     private final String leaderHost;
     private final int leaderPort;
+    private final int leaderClientPort;
 
     @JsonCreator
     public RedirectToLeaderMessage(
@@ -18,10 +19,12 @@ public class RedirectToLeaderMessage extends Message {
             @JsonProperty("sequenceNumber") long sequenceNumber,
             @JsonProperty("timestamp") long timestamp,
             @JsonProperty("leaderHost") String leaderHost,
-            @JsonProperty("leaderPort") int leaderPort) {
+            @JsonProperty("leaderPort") int leaderPort,
+            @JsonProperty("leaderClientPort") int leaderClientPort) {
         super(senderId, sequenceNumber, timestamp);
         this.leaderHost = leaderHost;
         this.leaderPort = leaderPort;
+        this.leaderClientPort = leaderClientPort;
     }
 
     @JsonProperty("leaderHost")
@@ -29,6 +32,9 @@ public class RedirectToLeaderMessage extends Message {
 
     @JsonProperty("leaderPort")
     public int getLeaderPort() { return leaderPort; }
+
+    @JsonProperty("leaderClientPort")
+    public int getLeaderClientPort() { return leaderClientPort; }
 
 
     @Override

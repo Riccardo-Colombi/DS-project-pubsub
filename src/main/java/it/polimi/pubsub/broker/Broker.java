@@ -52,8 +52,9 @@ public class Broker {
     private String clusterId;
     private volatile int currentTerm;
     private String currentLeaderId;
-    private String leaderHost;   // host del leader, usato per redirect
-    private int leaderPort;      // port del leader, usato per redirect
+    private String leaderHost;       // host del leader, usato per redirect
+    private int leaderPort;          // broker port del leader, usato per redirect broker→broker
+    private int leaderClientPort;    // client port del leader, usato per redirect client→leader
 
     private final ConcurrentHashMap<String, PendingMessage> pendingEntries = new ConcurrentHashMap<>();
     record ProxyRecord(String clientId, String originMessageId, String proxyMessageId) {}
@@ -556,6 +557,23 @@ public class Broker {
     // Client lifecycle
     // ------------------------------------------------------------------
 
+    public void redirectClientToLeader(String clientId) {
+        if (leaderHost == null || leaderClientPort <= 0) {
+            System.err.println(BROKER_ID + ": cannot redirect client " + clientId + " — leader address unknown");
+            return;
+        }
+        long seq = brokerCounter.incrementAndGet();
+        RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(
+                BROKER_ID, seq, System.currentTimeMillis(),
+                leaderHost, leaderPort, leaderClientPort);
+        ConnectionHandler handler = connectionRegistry.getConnectionHandler(clientId);
+        if (handler != null) {
+            handler.send(redirect);
+            System.out.println(BROKER_ID + " redirecting client " + clientId
+                    + " to leader at " + leaderHost + ":" + leaderClientPort);
+        }
+    }
+
     /**
      * Called by ClientHandler when a client connects (first time or reconnect).
      * On reconnect: updates the handler and delivers any buffered offline messages.
@@ -569,6 +587,11 @@ public class Broker {
             deliverOfflineMessages(clientId);
         } else {
             System.out.println("Client " + clientId + " connected for the first time.");
+        }
+
+        // Redirect if in FOLLOWER state
+        if (state.getRole() == BrokerRole.FOLLOWER) {
+            redirectClientToLeader(clientId);
         }
     }
 
@@ -717,8 +740,9 @@ public class Broker {
         this.clusterId = java.util.UUID.randomUUID().toString();
         this.currentTerm = 1;
         this.currentLeaderId = BROKER_ID;
-        this.leaderHost = null; // sono io il LEADER
-        this.leaderPort = -1; // sono io il LEADER
+        this.leaderHost = null;         // sono io il LEADER
+        this.leaderPort = -1;           // sono io il LEADER
+        this.leaderClientPort = -1;     // sono io il LEADER
 
         // Cambio state in LEADER
 
@@ -767,7 +791,7 @@ public class Broker {
 
         if (!BROKER_ID.equals(currentLeaderId)) {
             long seq = brokerCounter.incrementAndGet();
-            RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(BROKER_ID, seq, System.currentTimeMillis(), leaderHost, leaderPort);
+            RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(BROKER_ID, seq, System.currentTimeMillis(), leaderHost, leaderPort, leaderClientPort);
             sendAck(requesterId, msg.getMessageId());
             connectionRegistry.getConnectionHandler(requesterId).send(redirect);
             return;
@@ -798,7 +822,8 @@ public class Broker {
                 BROKER_ID, seq, System.currentTimeMillis(),
                 clusterId, currentTerm, peers,
                 "localhost",  // o this.brokerHost se lo aggiungi come campo
-                BROKER_PORT
+                BROKER_PORT,
+                CLIENT_PORT
         );
         connectionRegistry.getConnectionHandler(requesterId).send(joinAck);
 
@@ -816,8 +841,9 @@ public class Broker {
         this.currentLeaderId = msg.getSenderId();
         this.state           = new FollowerState(this);
 
-        this.leaderHost = msg.getLeaderHost();
-        this.leaderPort = msg.getLeaderPort();
+        this.leaderHost       = msg.getLeaderHost();
+        this.leaderPort       = msg.getLeaderPort();
+        this.leaderClientPort = msg.getLeaderClientPort();
 
         BrokerHandler leaderHandler = connectionRegistry.getBrokerHandler(msg.getSenderId());
         if (leaderHandler != null) leaderHandler.markAsClusterMember();
@@ -850,114 +876,4 @@ public class Broker {
         joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
     }
 
-    /**
-     * Usato da FollowerState per redirigere un PUBLISH al leader.
-     */
-//    public void redirectToLeader(Message message) {
-//        ConnectionHandler leaderHandler = connectionRegistry.getConnectionHandler(currentLeaderId);
-//        if (leaderHandler != null) {
-//            leaderHandler.send(message);
-//        } else {
-//            System.err.println("redirectToLeader: leader " + currentLeaderId + " non raggiungibile");
-//        }
-//    }
-
-//    public String proxyToLeader(Message message) {
-//        ConnectionHandler leaderHandler = connectionRegistry.getConnectionHandler(currentLeaderId);
-//        if (leaderHandler == null) {
-//            System.err.println("proxyToLeader: leader " + currentLeaderId + " non raggiungibile");
-//            return null;
-//        }
-//
-//        long seq = brokerCounter.incrementAndGet();
-//        ProxyMessage proxy = new ProxyMessage(BROKER_ID, seq, System.currentTimeMillis(),
-//                message.getSenderId(), BROKER_ID, message);
-//        leaderHandler.send(proxy);
-//        return proxy.getMessageId();
-//    }
-//
-//    public void handleProxyMessage(ProxyMessage msg) throws Exception {
-//        String proxyBrokerId  = msg.getProxyBrokerId();
-//        String originClientId = msg.getOriginClientId();
-//        Message inner         = msg.getInnerMessage();
-//
-//        // Registra che questo client è raggiungibile tramite proxyBrokerId
-//        connectionRegistry.registerRemoteClient(originClientId, proxyBrokerId);
-//
-//        dispatchMessage(inner);
-//        sendAck(proxyBrokerId, msg.getMessageId());
-//    }
-//
-//    public void replicateToFollowers(Message message, String originClientId,
-//                                     String originMessageId, String proxyBrokerId,
-//                                     String proxyMessageId) {
-//        Collection<BrokerHandler> followers = connectionRegistry.getConnectedBrokerHandlers();
-//        int majority = (followers.size() + 1) / 2 + 1;
-//
-//        long seq = brokerCounter.incrementAndGet();
-//        AppendEntryMessage appendEntry = new AppendEntryMessage(
-//                BROKER_ID, seq, System.currentTimeMillis(),
-//                message, currentTerm, 0L);
-//
-//        PendingMessage pending = new PendingMessage(
-//                message, originClientId, originMessageId, proxyBrokerId, proxyMessageId, majority);
-//        pending.addAckAndCheckMajority(BROKER_ID);
-//        pendingEntries.put(appendEntry.getMessageId(), pending);
-//
-//        for (BrokerHandler handler : followers) {
-//            handler.send(appendEntry);
-//        }
-//
-//        checkAndCommit(appendEntry.getMessageId(), pending);
-//    }
-//
-//    public void handleAppendEntryAck(AppendEntryAckMessage msg) {
-//        String entryId = msg.getEntryMessageId();
-//        PendingMessage pending = pendingEntries.get(entryId);
-//        if (pending == null) return; // già committato
-//
-//        boolean majority = pending.addAckAndCheckMajority(msg.getSenderId());
-//        if (majority) {
-//            checkAndCommit(entryId, pending);
-//        }
-//    }
-//
-//    private void checkAndCommit(String appendEntryId, PendingMessage pending) {
-//        // remove è atomico: solo il primo thread che lo chiama procede
-//        if (pendingEntries.remove(appendEntryId, pending)) {
-//            try {
-//                commitEntry(pending);
-//            } catch (Exception e) {
-//                System.err.println("Commit failed: " + e.getMessage());
-//            }
-//        }
-//    }
-//
-//    private void commitEntry(PendingMessage pending) throws Exception {
-//        dispatchMessage(pending.getMessage());
-//
-//        if (pending.getOriginClientId() != null) {
-//            if (connectionRegistry.getConnectionHandler(pending.getOriginClientId()) != null) {
-//                sendAck(pending.getOriginClientId(), pending.getOriginMessageId());
-//            } else {
-//                // usa proxyMessageId: il FollowerState lo trova in pendingProxies
-//                sendAck(pending.getProxyBrokerId(), pending.getProxyMessageId());
-//            }
-//        }
-//    }
-//
-//    public void appendToWal(Message message) throws Exception {
-//        wal.append(message);
-//    }
-//
-//    public void sendAppendEntryAck(AppendEntryMessage appendEntry) {
-//        long seq = brokerCounter.incrementAndGet();
-//        AppendEntryAckMessage ack = new AppendEntryAckMessage(
-//                BROKER_ID, seq, System.currentTimeMillis(),
-//                appendEntry.getMessageId(), currentTerm);
-//        ConnectionHandler leaderHandler = connectionRegistry.getConnectionHandler(appendEntry.getSenderId());
-//        if (leaderHandler != null) {
-//            leaderHandler.send(ack);
-//        }
-//    }
 }
