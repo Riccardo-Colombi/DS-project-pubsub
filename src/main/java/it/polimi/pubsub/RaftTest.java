@@ -16,10 +16,6 @@ public class RaftTest {
 
         Thread.sleep(500);
 
-        broker2.joinCluster("localhost", 8090);
-
-        Thread.sleep(500);
-
         broker1.createCluster();
 
         Thread.sleep(500);
@@ -28,7 +24,29 @@ public class RaftTest {
 
         Thread.sleep(500);
 
-        broker3.joinCluster("localhost", 8091);
+        broker3.joinCluster("localhost", 8090);
+
+        Thread.sleep(500);
+
+        Broker broker4 = new Broker("broker-4", 8093, 8083, "data/wal_4.log", "data/offlineBroker4");
+        broker4.run();
+
+        Thread.sleep(500);
+
+        broker4.joinCluster("localhost", 8090);
+
+        Client subscriber = new Client("client-1", "localhost", 8080);
+        Client publisher = new Client("client-2", "localhost", 8080);
+        subscriber.connect();
+        publisher.connect();
+
+        Thread.sleep(500);
+
+        subscriber.subscribe("Topic1");
+
+        Thread.sleep(500);
+
+        publisher.publish("Topic1", "MESSAGGIO DA RICEVERE".getBytes());
 
     }
 }

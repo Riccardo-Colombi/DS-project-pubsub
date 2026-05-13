@@ -140,8 +140,9 @@ public class Broker {
                 BrokerHandler handler = new BrokerHandler(conn, this, executor);
 
                 try {
-                    handler.performHandshake(BROKER_ID); // blocks until nodeId is known
+                    handler.performHandshake(BROKER_ID, BROKER_PORT); // blocks until nodeId is known
                     socket.setSoTimeout(0);              // remove timeout for normal ops
+                    addPeerToRegistry(handler.getNodeId(), handler);
                     handler.start();                     // readLoop/writeLoop now safe
                     shareTopicSubscribers(handler);      // nodeId is guaranteed non-null
 
@@ -163,8 +164,9 @@ public class Broker {
         TcpConnection conn = new TcpConnection(socket);
         BrokerHandler handler = new BrokerHandler(conn, this, executor);
 
-        handler.performHandshake(BROKER_ID);
+        handler.performHandshake(BROKER_ID, BROKER_PORT);
         socket.setSoTimeout(0);
+        addPeerToRegistry(handler.getNodeId(), handler);
         handler.start();
         shareTopicSubscribers(handler);
 
@@ -774,16 +776,22 @@ public class Broker {
 
         }
 
+        BrokerHandler requesterHandler = connectionRegistry.getBrokerHandler(requesterId);
+        if (requesterHandler != null) requesterHandler.markAsClusterMember();
+
         // Se sono il LEADER rispondo con i dati del cluster
 
         // TODO doing this I will also send the brokers that are not in the cluster,
         //  is this right?
 
-        List<String> peers = connectionRegistry.getConnectedBrokerHandlers()
+        List<BrokerAddress> peers = connectionRegistry.getConnectedBrokerHandlers()
                 .stream()
-                .map(BrokerHandler::getNodeId)
-                .filter(id -> !id.equals(requesterId))
+                .filter(h -> !h.getNodeId().equals(requesterId))
+                .map(h -> new BrokerAddress(h.getNodeId(), h.getRemoteHost(), h.getRemoteBrokerPort()))
                 .collect(java.util.stream.Collectors.toList());
+
+        peers.forEach(p -> System.out.println("Peer in ack: " + p.getBrokerId()
+                + " -> " + p.getHost() + ":" + p.getBrokerPort()));
 
         long seq = brokerCounter.incrementAndGet();
         JoinClusterAckMessage joinAck = new JoinClusterAckMessage(
@@ -810,6 +818,23 @@ public class Broker {
 
         this.leaderHost = msg.getLeaderHost();
         this.leaderPort = msg.getLeaderPort();
+
+        BrokerHandler leaderHandler = connectionRegistry.getBrokerHandler(msg.getSenderId());
+        if (leaderHandler != null) leaderHandler.markAsClusterMember();
+
+        executor.submit( () -> {
+            for (BrokerAddress peer : msg.getPeerAddresses()) {
+                if (!connectionRegistry.isBrokerConnected(peer.getBrokerId())) {
+                    try {
+                        BrokerHandler h = connectToPeer(peer.getHost(), peer.getBrokerPort());
+                        h.markAsClusterMember();
+                    } catch (Exception e) {
+                        System.err.println("Impossibile connettersi al peer "
+                                + peer.getBrokerId() + ": " + e.getMessage());
+                    }
+                }
+            }
+        });
 
         System.out.println(BROKER_ID + " joined cluster " + clusterId
                 + " — term=" + currentTerm + ", leader=" + currentLeaderId + ", role=FOLLOWER");

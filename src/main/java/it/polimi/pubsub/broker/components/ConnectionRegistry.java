@@ -142,4 +142,11 @@ public class ConnectionRegistry {
         if (brokerId == null) return null;
         return brokers.get(brokerId);
     }
+
+    public Collection<BrokerHandler> getClusterMembers() {
+        return brokers.values().stream()
+                .filter(BrokerHandler::isClusterMember)
+                .collect(Collectors.toList());
+    }
+
 }

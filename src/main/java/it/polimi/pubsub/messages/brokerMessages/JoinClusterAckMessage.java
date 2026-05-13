@@ -2,6 +2,7 @@ package it.polimi.pubsub.messages.brokerMessages;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import it.polimi.pubsub.broker.components.BrokerAddress;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.MessageType;
 import java.util.List;
@@ -12,7 +13,7 @@ public class JoinClusterAckMessage extends Message {
 
     private final String clusterId;
     private final int currentTerm;
-    private final List<String> peerAddresses;
+    private final List<BrokerAddress> peerAddresses;
     private final String leaderHost;
     private final int leaderPort;
 
@@ -23,9 +24,10 @@ public class JoinClusterAckMessage extends Message {
             @JsonProperty("timestamp") long timestamp,
             @JsonProperty("clusterId") String clusterId,
             @JsonProperty("currentTerm") int currentTerm,
-            @JsonProperty("peerAddresses") List<String> peerAddresses,
+            @JsonProperty("peerAddresses") List<BrokerAddress> peerAddresses,
             @JsonProperty("leaderHost") String leaderHost,
             @JsonProperty("leaderPort") int leaderPort) {
+
         super(senderId, sequenceNumber, timestamp);
         this.clusterId     = clusterId;
         this.currentTerm   = currentTerm;
@@ -41,7 +43,7 @@ public class JoinClusterAckMessage extends Message {
     public int getCurrentTerm() { return currentTerm; }
 
     @JsonProperty("peerAddresses")
-    public List<String> getPeerAddresses() { return peerAddresses; }
+    public List<BrokerAddress> getPeerAddresses() { return peerAddresses; }
 
     @JsonProperty("leaderHost")
     public String getLeaderHost() { return leaderHost; }
@@ -53,4 +55,5 @@ public class JoinClusterAckMessage extends Message {
     public MessageType getType() {
         return MessageType.JOIN_CLUSTER_ACK;
     }
+
 }

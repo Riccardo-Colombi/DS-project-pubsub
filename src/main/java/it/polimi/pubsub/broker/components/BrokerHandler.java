@@ -10,6 +10,12 @@ import java.util.concurrent.ExecutorService;
 
 public class BrokerHandler extends ConnectionHandler {
 
+    // Information about other Brokers
+
+    private String remoteHost;
+    private int remoteBrokerPort;
+    private volatile boolean clusterMember = false;
+
     public BrokerHandler(TcpConnection connection, Broker broker, ExecutorService executor) {
         super(connection, broker, executor);
     }
@@ -22,9 +28,9 @@ public class BrokerHandler extends ConnectionHandler {
         broker.onBrokerDisconnection(brokerId);
     }
 
-    public void performHandshake(String selfId) throws Exception {
+    public void performHandshake(String selfId, int selfBrokerPort) throws Exception {
         // 1. Announce ourselves synchronously — before the write loop exists
-        connection.send(new BrokerHelloMessage(selfId, 0, System.currentTimeMillis()));
+        connection.send(new BrokerHelloMessage(selfId, 0, System.currentTimeMillis(), selfBrokerPort));
 
         // 2. Block until we read their identity
         Message hello = connection.receive();
@@ -36,7 +42,28 @@ public class BrokerHandler extends ConnectionHandler {
 
         // 3. nodeId is now known before any loop starts
         this.nodeId = hello.getSenderId();
-        registerNode(this.nodeId);
+
+        // Legge host/port dalla connessione TCP sottostante
+        this.remoteHost = connection.getRemoteHost();
+        this.remoteBrokerPort = ((BrokerHelloMessage) hello).getBrokerPort();
+
+        //registerNode(this.nodeId);
+    }
+
+    public String getRemoteHost() {
+        return remoteHost;
+    }
+
+    public int getRemoteBrokerPort() {
+        return remoteBrokerPort;
+    }
+
+    public void markAsClusterMember() {
+        this.clusterMember = true;
+    }
+
+    public boolean isClusterMember() {
+        return clusterMember;
     }
 
 }

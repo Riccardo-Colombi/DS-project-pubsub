@@ -46,4 +46,9 @@ public class TcpConnection {
     public void close() throws IOException {
         socket.close();
     }
+
+    public String getRemoteHost() {
+        return socket.getInetAddress().getHostAddress();
+    }
+
 }
