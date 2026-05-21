@@ -5,7 +5,8 @@ import it.polimi.pubsub.broker.components.BrokerRole;
 import it.polimi.pubsub.broker.BrokerState;
 import it.polimi.pubsub.messages.AckMessage;
 import it.polimi.pubsub.messages.Message;
-import it.polimi.pubsub.messages.MessageType;
+import it.polimi.pubsub.messages.brokerMessages.AppendEntryMessage;
+import it.polimi.pubsub.messages.brokerMessages.CommitEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,21 +38,30 @@ public class FollowerState implements BrokerState {
                 broker.handleJoinClusterRequest((JoinClusterMessage) message);
                 break;
 
-//            case APPEND_ENTRY:
-//                AppendEntryMessage appendEntry = (AppendEntryMessage) message;
-//                broker.appendToWal(appendEntry.getEntry());
-//                broker.sendAppendEntryAck(appendEntry);
-//                break;
-//
-//            case PUBLISH:
-//            case SUBSCRIBE:
-//            case UNSUBSCRIBE:
-//                String proxyMessageId = broker.proxyToLeader(message);
-//                if (proxyMessageId != null) {
-//                    pendingProxies.put(proxyMessageId, message.getSenderId());
-//                    pendingProxyOriginalIds.put(proxyMessageId, message.getMessageId());
-//                }
-//                break;
+            case APPEND_ENTRY:
+                AppendEntryMessage appendEntry = (AppendEntryMessage) message;
+                broker.appendToWal(appendEntry.getEntry());
+                broker.sendAppendEntryAck(appendEntry);
+                break;
+
+            case COMMIT_ENTRY:
+                CommitEntryMessage commitEntry = (CommitEntryMessage) message;
+                broker.applyToLocalState(commitEntry.getEntry());
+                break;
+
+            // todo : PUBLISH SUBSCRIBE and UNSUBSCRIBE are for edge case coverage, need to understand if they are fully covered
+
+            case PUBLISH:
+                broker.redirectClientToLeader(message.getSenderId());
+                break;
+
+            case SUBSCRIBE:
+                broker.redirectClientToLeader(message.getSenderId());
+                break;
+
+            case UNSUBSCRIBE:
+                broker.redirectClientToLeader(message.getSenderId());
+                break;
 
             case ACK:
                 AckMessage ack = (AckMessage) message;
@@ -69,6 +79,11 @@ public class FollowerState implements BrokerState {
                 break;
 
             default:
+                // this default behavior is to ensure that clients that sends requests
+                // to a follower will be redirected to the leader
+
+                // todo ensure this is the default behavior and that every other possible case is covered
+
                 broker.dispatchMessage(message);
         }
     }

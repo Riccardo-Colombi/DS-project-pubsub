@@ -133,10 +133,6 @@ public class ConnectionRegistry {
         return clients.get(nodeId);
     }
 
-    public void registerRemoteClient(String clientId, String brokerId) {
-        clientHomeBroker.put(clientId, brokerId);
-    }
-
     public BrokerHandler findBrokerForClient(String clientId) {
         String brokerId = clientHomeBroker.get(clientId);
         if (brokerId == null) return null;

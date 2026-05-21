@@ -25,6 +25,9 @@ import it.polimi.pubsub.messages.brokerMessages.*;
         @JsonSubTypes.Type(value = JoinClusterMessage.class,    name = "JOIN_CLUSTER"),
         @JsonSubTypes.Type(value = JoinClusterAckMessage.class, name = "JOIN_CLUSTER_ACK"),
         @JsonSubTypes.Type(value = RedirectToLeaderMessage.class, name = "REDIRECT_TO_LEADER"),
+        @JsonSubTypes.Type(value = AppendEntryMessage.class, name = "APPEND_ENTRY"),
+        @JsonSubTypes.Type(value = AppendEntryAckMessage.class, name = "APPEND_ENTRY_ACK"),
+        @JsonSubTypes.Type(value = CommitEntryMessage.class, name = "COMMIT_ENTRY"),
 
 })
 

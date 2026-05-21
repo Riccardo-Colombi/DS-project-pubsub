@@ -16,4 +16,5 @@ public enum MessageType {
     PROXY,
     APPEND_ENTRY,
     APPEND_ENTRY_ACK,
+    COMMIT_ENTRY,
 }

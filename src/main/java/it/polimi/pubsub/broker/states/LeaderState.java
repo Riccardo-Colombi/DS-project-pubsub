@@ -4,7 +4,7 @@ import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.broker.components.BrokerRole;
 import it.polimi.pubsub.broker.BrokerState;
 import it.polimi.pubsub.messages.Message;
-import it.polimi.pubsub.messages.brokerMessages.*;
+import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
 
 public class LeaderState implements BrokerState {
 
@@ -26,30 +26,9 @@ public class LeaderState implements BrokerState {
                 broker.handleJoinClusterRequest((JoinClusterMessage) message);
                 break;
 
-//            case PROXY:
-//                ProxyMessage proxy = (ProxyMessage) message;
-//                broker.replicateToFollowers(
-//                        proxy.getInnerMessage(),
-//                        proxy.getOriginClientId(),
-//                        proxy.getInnerMessage().getMessageId(),
-//                        proxy.getSenderId(),
-//                        proxy.getMessageId());
-//                break;
-//
-//            case PUBLISH:
-//            case SUBSCRIBE:
-//            case UNSUBSCRIBE:
-//                broker.replicateToFollowers(
-//                        message,
-//                        message.getSenderId(),
-//                        message.getMessageId(),
-//                        null,
-//                        null);
-//                break;
-//
-//            case APPEND_ENTRY_ACK:
-//                broker.handleAppendEntryAck((AppendEntryAckMessage) message);
-//                break;
+            case SUBSCRIBE, UNSUBSCRIBE, PUBLISH:
+                broker.replicateToFollowers(message);
+                break;
 
             default:
                 broker.dispatchMessage(message);

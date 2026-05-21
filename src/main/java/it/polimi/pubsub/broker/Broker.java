@@ -57,7 +57,23 @@ public class Broker {
     private int leaderClientPort;    // client port del leader, usato per redirect client→leader
 
     private final ConcurrentHashMap<String, PendingMessage> pendingEntries = new ConcurrentHashMap<>();
-    record ProxyRecord(String clientId, String originMessageId, String proxyMessageId) {}
+
+    // raftPendingEntries and RaftPendingEntry for managing simple action of RAFT cluster
+
+    private final ConcurrentHashMap<String, RaftPendingEntry> raftPendingEntries = new ConcurrentHashMap<>();
+
+    private static class RaftPendingEntry {
+        final Message originalMessage;
+        final String clientId;
+        final int neededAcks;
+        final AtomicInteger receivedAcks = new AtomicInteger(0);
+
+        RaftPendingEntry(Message originalMessage, String clientId, int neededAcks) {
+            this.originalMessage = originalMessage;
+            this.clientId        = clientId;
+            this.neededAcks      = neededAcks;
+        }
+    }
 
     Cache<String, Boolean> messageCache = Caffeine.newBuilder()
             .maximumSize(10000)
@@ -214,7 +230,13 @@ public class Broker {
     }
 
     public void onMessageReceived(Message message) throws Exception {
-        if (message.getType() != MessageType.HEARTBEAT) {
+
+        // Ignoring every non useful message
+
+        if (message.getType() != MessageType.HEARTBEAT
+                && message.getType() != MessageType.APPEND_ENTRY
+                && message.getType() != MessageType.APPEND_ENTRY_ACK
+                && message.getType() != MessageType.COMMIT_ENTRY) {
             testCountForSnapshot.incrementAndGet();
             wal.append(message);
 
@@ -267,6 +289,12 @@ public class Broker {
                 break;
             case REDIRECT_TO_LEADER:
                 handleRedirectToLeader((RedirectToLeaderMessage) message);
+                break;
+            case APPEND_ENTRY_ACK:
+                handleAppendEntryAck((AppendEntryAckMessage) message);
+                break;
+            case COMMIT_ENTRY:
+                applyToLocalState(((CommitEntryMessage) message).getEntry());
                 break;
             default:
                 System.err.println("Unknown message type received.");
@@ -623,6 +651,10 @@ public class Broker {
         }
     }
 
+    public String getBrokerId() {
+        return BROKER_ID;
+    }
+
     public void addPeerToRegistry(String brokerId, BrokerHandler handler) {
         connectionRegistry.registerBroker(brokerId, handler);
     }
@@ -874,6 +906,111 @@ public class Broker {
     private void handleRedirectToLeader(RedirectToLeaderMessage msg) throws Exception {
         System.out.println(BROKER_ID + " rediretto al leader " + msg.getLeaderHost() + ":" + msg.getLeaderPort());
         joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
+    }
+
+    public void replicateToFollowers(Message msg) throws Exception {
+
+        // Getting cluster dimension
+
+        Collection<BrokerHandler> clusterMembers = connectionRegistry.getClusterMembers();
+        int clusterDim  = clusterMembers.size() + 1;
+
+        // NeededAcks = majority of nodes (at least half of them) - leader
+        // (5 + 1) / 2 = 3
+        // (8 + 1) / 2 = 4
+        // with clusterDim / 2 we need at least half of the follower to ack
+
+        // todo maybe to guarantee at least once we need all of them to ack?
+        //  what happens if network partition and we remain in less then half of the clusterDim?
+
+        int neededAcks  = clusterDim / 2;
+
+        // Empty cluster or just leader
+
+        if (neededAcks == 0) {
+            dispatchMessage(msg);
+            return;
+        }
+
+        long seq = brokerCounter.incrementAndGet();
+
+        // Creating message and registering it in the map
+
+        AppendEntryMessage appendEntry = new AppendEntryMessage(BROKER_ID, seq, System.currentTimeMillis(), msg);
+        raftPendingEntries.put(appendEntry.getMessageId(), new RaftPendingEntry(msg, msg.getSenderId(), neededAcks));
+
+        // Sending to all the followers the message to replicate
+
+        for (BrokerHandler handler : clusterMembers) {
+            handler.send(appendEntry);
+        }
+    }
+
+    public void sendAppendEntryAck(AppendEntryMessage appendEntry) {
+
+        long seq = brokerCounter.incrementAndGet();
+        AppendEntryAckMessage ack = new AppendEntryAckMessage(BROKER_ID, seq, System.currentTimeMillis(), appendEntry.getMessageId());
+
+        // todo update state in the follower
+        //  Done in applyToLocalState
+
+        ConnectionHandler handler = connectionRegistry.getConnectionHandler(appendEntry.getSenderId());
+
+        if (handler != null){
+            handler.send(ack);
+        }
+    }
+
+    public void handleAppendEntryAck(AppendEntryAckMessage msg) throws Exception {
+
+        updateHeartbeat(msg.getSenderId());
+
+        RaftPendingEntry entry = raftPendingEntries.get(msg.getAcknowledgedEntryId());
+        if (entry == null){
+            // if entry == null, it was removed, so "committed"
+            return;
+        }
+
+        int acksNumber = entry.receivedAcks.incrementAndGet();
+        if (acksNumber >= entry.neededAcks) {
+            // Need to remove it from the table if it has received the neededAcks
+            if (raftPendingEntries.remove(msg.getAcknowledgedEntryId()) != null) {
+                // if remove == null that means that it was already committed
+                dispatchMessage(entry.originalMessage);
+                broadcastCommitEntry(entry.originalMessage);
+            }
+        }
+    }
+
+    // Tells to all the followers to commit the changes
+
+    private void broadcastCommitEntry(Message originalMessage) {
+
+        long seq = brokerCounter.incrementAndGet();
+        CommitEntryMessage commit = new CommitEntryMessage(BROKER_ID, seq, System.currentTimeMillis(), originalMessage);
+        for (BrokerHandler handler : connectionRegistry.getClusterMembers()) {
+            handler.send(commit);
+        }
+
+    }
+
+    public void applyToLocalState(Message message) {
+        switch (message.getType()) {
+            case SUBSCRIBE:
+                SubscribeMessage subMsg = (SubscribeMessage) message;
+                topicSubscribersTable.addClientSubscription(subMsg.getTopic(), subMsg.getSenderId(), subMsg.isDurable());
+                break;
+            case UNSUBSCRIBE:
+                UnsubscribeMessage unsubMsg = (UnsubscribeMessage) message;
+                topicSubscribersTable.removeClientSubscription(unsubMsg.getTopic(), unsubMsg.getSenderId());
+                break;
+            default:
+                break;
+        }
+    }
+
+    public void appendToWal(Message msg) throws Exception {
+        wal.append(msg);
     }
 
 }
