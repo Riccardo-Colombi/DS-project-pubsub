@@ -5,6 +5,7 @@ import it.polimi.pubsub.broker.components.BrokerRole;
 import it.polimi.pubsub.broker.BrokerState;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
+import it.polimi.pubsub.messages.brokerMessages.RequestVoteMessage;
 
 public class LeaderState implements BrokerState {
 
@@ -28,6 +29,14 @@ public class LeaderState implements BrokerState {
 
             case SUBSCRIBE, UNSUBSCRIBE, PUBLISH:
                 broker.replicateToFollowers(message);
+                break;
+
+            case REQUEST_VOTE:
+                RequestVoteMessage rv = (RequestVoteMessage) message;
+                if (rv.getTerm() > broker.getCurrentTerm()) {
+                    broker.becomeFollower(rv.getTerm(), null);
+                    broker.handleRequestVote(rv);
+                }
                 break;
 
             default:

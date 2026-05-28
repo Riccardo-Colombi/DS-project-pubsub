@@ -8,20 +8,28 @@ import it.polimi.pubsub.messages.MessageType;
 
 public class AppendEntryAckMessage extends Message {
 
-    private final String acknowledgeEntryMessageId;
+    private final boolean success;
+    private final int acknowledgedLogIndex;
 
     @JsonCreator
     public AppendEntryAckMessage(
             @JsonProperty("senderId") String senderId,
             @JsonProperty("sequenceNumber") long sequenceNumber,
             @JsonProperty("timestamp") long timestamp,
-            @JsonProperty("acknowledgedEntryId") String acknowledgeEntryMessageId) {
+            @JsonProperty("success") boolean success,
+            @JsonProperty("acknowledgedLogIndex") int acknowledgedLogIndex) {
+
         super(senderId, sequenceNumber, timestamp);
-        this.acknowledgeEntryMessageId = acknowledgeEntryMessageId;
+        this.success = success;
+        this.acknowledgedLogIndex = acknowledgedLogIndex;
     }
 
-    public String getAcknowledgedEntryId() {
-        return acknowledgeEntryMessageId;
+    public boolean isSuccess() {
+        return success;
+    }
+
+    public int getAcknowledgedLogIndex() {
+        return acknowledgedLogIndex;
     }
 
     @Override

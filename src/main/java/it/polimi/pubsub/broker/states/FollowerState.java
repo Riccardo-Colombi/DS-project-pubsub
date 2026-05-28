@@ -4,10 +4,12 @@ import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.broker.components.BrokerRole;
 import it.polimi.pubsub.broker.BrokerState;
 import it.polimi.pubsub.messages.AckMessage;
+import it.polimi.pubsub.messages.HeartbeatMessage;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.brokerMessages.AppendEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.CommitEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
+import it.polimi.pubsub.messages.brokerMessages.RequestVoteMessage;
 
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,22 +33,24 @@ public class FollowerState implements BrokerState {
     public void onMessageReceived(Message message) throws Exception {
         switch (message.getType()) {
             case HEARTBEAT:
-                broker.updateHeartbeat(message.getSenderId());
-                break;
+                HeartbeatMessage hb = (HeartbeatMessage) message;
+                broker.updateHeartbeat(hb.getSenderId());
 
-            case JOIN_CLUSTER:
-                broker.handleJoinClusterRequest((JoinClusterMessage) message);
+                if (hb.getTerm() >= broker.getCurrentTerm()) {
+                    broker.updateLeaderHeartbeat();
+                    if (hb.getTerm() > broker.getCurrentTerm()) {
+                        broker.becomeFollower(hb.getTerm(), hb.getSenderId());
+                    }
+                }
                 break;
 
             case APPEND_ENTRY:
-                AppendEntryMessage appendEntry = (AppendEntryMessage) message;
-                broker.appendToWal(appendEntry.getEntry());
-                broker.sendAppendEntryAck(appendEntry);
+                broker.handleAppendEntry((AppendEntryMessage) message);
                 break;
 
             case COMMIT_ENTRY:
                 CommitEntryMessage commitEntry = (CommitEntryMessage) message;
-                broker.applyToLocalState(commitEntry.getEntry());
+                broker.commitEntry(commitEntry.getLogIndex());
                 break;
 
             // todo : PUBLISH SUBSCRIBE and UNSUBSCRIBE are for edge case coverage, need to understand if they are fully covered
@@ -78,6 +82,14 @@ public class FollowerState implements BrokerState {
                 broker.sendAck(message.getSenderId(), message.getMessageId());
                 break;
 
+            case REQUEST_VOTE:
+                broker.handleRequestVote((RequestVoteMessage) message);
+                break;
+
+            case JOIN_CLUSTER:
+                broker.handleJoinClusterRequest((JoinClusterMessage) message);
+                break;
+
             default:
                 // this default behavior is to ensure that clients that sends requests
                 // to a follower will be redirected to the leader
@@ -90,11 +102,12 @@ public class FollowerState implements BrokerState {
 
     @Override
     public void onElectionTimeout() {
-
+        broker.startElection();
     }
 
     @Override
     public void onHeartbeatTick() {
 
     }
+
 }

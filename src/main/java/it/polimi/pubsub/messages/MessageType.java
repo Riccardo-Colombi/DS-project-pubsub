@@ -17,4 +17,6 @@ public enum MessageType {
     APPEND_ENTRY,
     APPEND_ENTRY_ACK,
     COMMIT_ENTRY,
+    REQUEST_VOTE,
+    REQUEST_VOTE_ACK,
 }

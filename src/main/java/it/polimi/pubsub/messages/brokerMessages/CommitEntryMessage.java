@@ -10,19 +10,28 @@ public class CommitEntryMessage extends Message {
 
     private final Message message;
 
+    private final int logIndex;
+
     @JsonCreator
     public CommitEntryMessage(
             @JsonProperty("senderId") String senderId,
             @JsonProperty("sequenceNumber") long sequenceNumber,
             @JsonProperty("timestamp") long timestamp,
-            @JsonProperty("entry") Message message) {
+            @JsonProperty("message") Message message,
+            @JsonProperty("logIndex") int logIndex) {
+
         super(senderId, sequenceNumber, timestamp);
 
         this.message = message;
+        this.logIndex = logIndex;
     }
 
-    public Message getEntry() {
+    public Message getMessage() {
         return message;
+    }
+
+    public int getLogIndex() {
+        return logIndex;
     }
 
     @Override
