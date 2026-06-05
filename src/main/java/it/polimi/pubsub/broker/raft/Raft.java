@@ -49,7 +49,7 @@ public class Raft {
     private volatile String votedFor = null;
     private volatile int electionVotes = 0;
     private volatile long lastLeaderHeartbeatMs = System.currentTimeMillis();
-    private final long electionTimeoutMs;
+    private volatile long electionTimeoutMs;
 
     private final List<LogEntry> raftLog = new ArrayList<>();
     private volatile int commitIndex = 0;
@@ -137,6 +137,7 @@ public class Raft {
         currentTerm++;
         votedFor = BROKER_ID;
         electionVotes = 1;
+        electionTimeoutMs = ThreadLocalRandom.current().nextLong(6000, 12001);
         lastLeaderHeartbeatMs = System.currentTimeMillis();
         state = new CandidateState(broker);
 
@@ -293,7 +294,7 @@ public class Raft {
             return;
         }
         updateLeaderHeartbeat();
-        if (msg.getLeaderTerm() > currentTerm) {
+        if (msg.getLeaderTerm() >= currentTerm) {
             becomeFollower(msg.getLeaderTerm(), msg.getSenderId());
         }
 

@@ -328,6 +328,11 @@ public class Broker {
     }
 
     private void checkHeartbeats() {
+
+        if (raftEngine.getRole() != BrokerRole.LEADER) {
+            return;
+        }
+
         for (ConnectionHandler handler : connectionRegistry.getConnectedHandlers()) {
             if (handler.isTimedOut(HEARTBEAT_TIMEOUT_MS)) {
                 System.out.println("Node " + handler.getNodeId() + " timed out, disconnecting.");
@@ -337,7 +342,7 @@ public class Broker {
     }
 
     private void startElectionTimeoutChecker() {
-        scheduler.scheduleAtFixedRate(this::checkElectionTimeout, raftEngine.getElectionTimeoutMs(), 1000, TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate(this::checkElectionTimeout, raftEngine.getElectionTimeoutMs(), 10, TimeUnit.MILLISECONDS);
     }
 
     private void checkElectionTimeout() {

@@ -38,9 +38,7 @@ public class FollowerState implements BrokerState {
 
                 if (hb.getTerm() >= broker.getCurrentTerm()) {
                     broker.updateLeaderHeartbeat();
-                    if (hb.getTerm() > broker.getCurrentTerm()) {
-                        broker.becomeFollower(hb.getTerm(), hb.getSenderId());
-                    }
+                    broker.becomeFollower(hb.getTerm(), hb.getSenderId());
                 }
                 break;
 
