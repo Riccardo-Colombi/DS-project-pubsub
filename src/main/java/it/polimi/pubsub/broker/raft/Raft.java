@@ -511,4 +511,8 @@ public class Raft {
         lastLeaderHeartbeatMs = System.currentTimeMillis();
         state = new SoloState(broker);
     }
+
+    public String getCurrentLeaderId() {
+        return currentLeaderId;
+    }
 }

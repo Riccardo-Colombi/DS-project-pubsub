@@ -625,4 +625,8 @@ public class Broker {
         joinCluster(peerHost, peerBrokerPort);
         System.out.println("[RESURRECT] " + BROKER_ID + " sent join request — waiting for cluster acceptance...");
     }
+
+    public String getCurrentLeaderId() {
+        return raftEngine.getCurrentLeaderId();
+    }
 }
