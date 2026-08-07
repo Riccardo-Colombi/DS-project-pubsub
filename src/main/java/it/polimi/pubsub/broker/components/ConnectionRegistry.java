@@ -26,6 +26,8 @@ public class ConnectionRegistry {
     // Value is true = CONNECTED, false = DISCONNECTED.
     private final ConcurrentHashMap<String, Boolean> clientStatuses;
 
+    private final ConcurrentHashMap<String, String> clientHomeBroker = new ConcurrentHashMap<>();
+
     public ConnectionRegistry() {
         this.clients        = new ConcurrentHashMap<>();
         this.brokers        = new ConcurrentHashMap<>();
@@ -130,4 +132,17 @@ public class ConnectionRegistry {
 
         return clients.get(nodeId);
     }
+
+    public BrokerHandler findBrokerForClient(String clientId) {
+        String brokerId = clientHomeBroker.get(clientId);
+        if (brokerId == null) return null;
+        return brokers.get(brokerId);
+    }
+
+    public Collection<BrokerHandler> getClusterMembers() {
+        return brokers.values().stream()
+                .filter(BrokerHandler::isClusterMember)
+                .collect(Collectors.toList());
+    }
+
 }

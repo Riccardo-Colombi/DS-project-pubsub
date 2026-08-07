@@ -2,23 +2,22 @@ package it.polimi.pubsub.broker;
 
 import it.polimi.pubsub.broker.components.BrokerHandler;
 import it.polimi.pubsub.broker.components.*;
+import it.polimi.pubsub.broker.raft.Raft;
 import it.polimi.pubsub.broker.storage.WriteAheadLog;
 import it.polimi.pubsub.messages.*;
-import it.polimi.pubsub.messages.brokerMessages.BrokerPublishMessage;
-import it.polimi.pubsub.messages.brokerMessages.BrokerSubscribeMessage;
-import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
+import it.polimi.pubsub.messages.brokerMessages.*;
 import it.polimi.pubsub.network.TcpConnection;
+import it.polimi.pubsub.broker.states.*;
 
+import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -29,6 +28,18 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 // State machine for roles LEADER, FOLLOWER, CANDIDATE
 // Add random timout for leader election
 
+// TODO RAFT
+//  state machine for different roles with different management of messages by each role
+//      a follower must redirect clients to the leader
+//      non blocking waits for election and ack wait
+//  once we create a broker he starts as a Leader so he can process messages even by himself
+//  methods for joining a cluster
+//      if cluster composed of 2 brokers instant election of one of them
+//      if composed by more then one check if request was send to a leader, if not redirect
+//  when a broker joins the cluster his information must be send to others broker of the cluster for election purposes
+//  timout for the leader
+//
+
 public class Broker {
 
     private final String BROKER_ID;
@@ -38,12 +49,16 @@ public class Broker {
     private final AckTracker ackTracker;
     private final WriteAheadLog wal;
     private final OfflineMessageStore offlineStore;
-    private final BrokerRole role;
 
     Cache<String, Boolean> messageCache = Caffeine.newBuilder()
             .maximumSize(10000)
             .expireAfterWrite(CACHE_LIFETIME, TimeUnit.MINUTES)
             .build();
+
+    // Crash simulation
+    private volatile boolean crashed = false;
+    private volatile ServerSocket clientServerSocket;
+    private volatile ServerSocket brokerServerSocket;
 
     private final ExecutorService executor;
     private final ScheduledExecutorService scheduler;
@@ -56,12 +71,13 @@ public class Broker {
 
     private static final long ACK_TIMEOUT_MS              = 5000;
     private static final long RETRY_INTERVAL_MS           = 2000;
-    private static final long HEARTBEAT_TIMEOUT_MS        = 10000;
+    private static final long HEARTBEAT_TIMEOUT_MS        = 25000;
     private static final long HEARTBEAT_CHECK_INTERVAL_MS = 3000;
     private static final long HEARTBEAT_INTERVAL_MS       = 3000;
     private static final long CACHE_LIFETIME              = 2;
-    private static final long SNAPSHOT_THRESHOLD          = 2;
 
+    private final Raft raftEngine;
+    private final PubSubRouter pubSubRouter;
 
     public Broker(String brokerId, int brokerPort, int clientPort,
                   String walFilePath, String offlineStorePath) throws Exception {
@@ -77,9 +93,11 @@ public class Broker {
         this.executor              = Executors.newCachedThreadPool();
         this.scheduler             = Executors.newScheduledThreadPool(2);
         this.brokerCounter         = new AtomicLong(0);
-        this.role                  = BrokerRole.FOLLOWER;
 
-        offlineStore.recover();   // load buffered messages from disk before accepting connections
+        this.raftEngine   = new Raft(BROKER_ID, BROKER_PORT, CLIENT_PORT, this, connectionRegistry, brokerCounter);
+        this.pubSubRouter = new PubSubRouter(BROKER_ID, this, topicSubscribersTable, offlineStore, connectionRegistry, ackTracker, brokerCounter);
+
+        offlineStore.recover();
         recoverState();
     }
 
@@ -88,6 +106,7 @@ public class Broker {
             startHeartbeat();
             startHeartbeatChecker();
             startRetryScheduler();
+            startElectionTimeoutChecker(); //todo check if works
             executor.submit(this::runClientListener);
             executor.submit(this::runBrokerListener);
         } catch (Exception e) {
@@ -97,9 +116,10 @@ public class Broker {
 
     private void runClientListener() {
         try (ServerSocket ss = new ServerSocket(CLIENT_PORT)) {
+            this.clientServerSocket = ss;
             System.out.println("Listening for clients on " + CLIENT_PORT);
 
-            while (true) {
+            while (!crashed) {
                 Socket socket = ss.accept();
                 TcpConnection conn = new TcpConnection(socket);
 
@@ -113,9 +133,10 @@ public class Broker {
 
     private void runBrokerListener() {
         try (ServerSocket ss = new ServerSocket(BROKER_PORT)) {
+            this.brokerServerSocket = ss;
             System.out.println("Listening for brokers on " + BROKER_PORT);
 
-            while (true) {
+            while (!crashed) {
                 Socket socket = ss.accept();
                 socket.setSoTimeout(5000); // handshake must complete within 5s
 
@@ -123,10 +144,11 @@ public class Broker {
                 BrokerHandler handler = new BrokerHandler(conn, this, executor);
 
                 try {
-                    handler.performHandshake(BROKER_ID); // blocks until nodeId is known
-                    socket.setSoTimeout(0);              // remove timeout for normal ops
-                    handler.start();                     // readLoop/writeLoop now safe
-                    shareTopicSubscribers(handler);      // nodeId is guaranteed non-null
+                    handler.performHandshake(BROKER_ID, BROKER_PORT);
+                    socket.setSoTimeout(0);
+                    addPeerToRegistry(handler.getNodeId(), handler);
+                    handler.start();
+                    pubSubRouter.shareTopicSubscribers(handler);
 
                     System.out.println(BROKER_ID + " connected to " + handler.getNodeId());
                 } catch (Exception e) {
@@ -139,19 +161,21 @@ public class Broker {
         }
     }
 
-    public void connectToPeer(String brokerHost, int brokerPort) throws Exception {
+    public BrokerHandler connectToPeer(String brokerHost, int brokerPort) throws Exception {
         Socket socket = new Socket(brokerHost, brokerPort);
         socket.setSoTimeout(5000);
 
         TcpConnection conn = new TcpConnection(socket);
         BrokerHandler handler = new BrokerHandler(conn, this, executor);
 
-        handler.performHandshake(BROKER_ID);
+        handler.performHandshake(BROKER_ID, BROKER_PORT);
         socket.setSoTimeout(0);
+        addPeerToRegistry(handler.getNodeId(), handler);
         handler.start();
-        shareTopicSubscribers(handler);
+        pubSubRouter.shareTopicSubscribers(handler);
 
         System.out.println(BROKER_ID + " connected to " + handler.getNodeId());
+        return handler;
     }
 
     private void recoverState() throws Exception {
@@ -193,45 +217,62 @@ public class Broker {
     }
 
     public void onMessageReceived(Message message) throws Exception {
-        if (message.getType() != MessageType.HEARTBEAT) {
-            //testCountForSnapshot.incrementAndGet();
-            int prev = testCountForSnapshot.getAndUpdate(n -> n >= SNAPSHOT_THRESHOLD ? 0 : n + 1);
+
+        if (crashed) return;
+
+        if (message.getType() != MessageType.HEARTBEAT
+                && message.getType() != MessageType.APPEND_ENTRY
+                && message.getType() != MessageType.APPEND_ENTRY_ACK
+                && message.getType() != MessageType.COMMIT_ENTRY
+                && message.getType() != MessageType.REQUEST_VOTE
+                && message.getType() != MessageType.REQUEST_VOTE_ACK) {
+            testCountForSnapshot.incrementAndGet();
+
+            //todo check this out
+            // //testCountForSnapshot.incrementAndGet();
+            //            int prev = testCountForSnapshot.getAndUpdate(n -> n >= SNAPSHOT_THRESHOLD ? 0 : n + 1);
+
             wal.append(message);
 
             System.out.println("Message received - " + "Broker: " + BROKER_ID +
                     ", message ID: " + message.getSequenceNumber() +
                     ", sender ID: " + message.getSenderId() +
                     ", message type: " + message.getType());
-
-            // todo not atomic, multiple thread could read 4 at almost the same time
-            //  and take multiple snapshot (probably creating problems)
-            if (prev >= SNAPSHOT_THRESHOLD) {
-                takeSnapshot();
-            }
         }
 
-        dispatchMessage(message);
+        raftEngine.getState().onMessageReceived(message);
+
+        // todo not atomic, multiple thread could read 4 at almost the same time and take multiple snapshot (probably creating problems)
+        if (testCountForSnapshot.get() >= 4) {
+            testCountForSnapshot.set(0);
+            takeSnapshot();
+        }
+
+        // todo check this out
+        // if (prev >= SNAPSHOT_THRESHOLD) {
+        //                takeSnapshot();
+        //            }
     }
 
-    private void dispatchMessage(Message message) throws Exception {
+    public void dispatchMessage(Message message) throws Exception {
         switch (message.getType()) {
             case SUBSCRIBE:
-                handleSubscribe((SubscribeMessage) message);
+                pubSubRouter.handleSubscribe((SubscribeMessage) message);
                 break;
             case BROKER_SUBSCRIBE:
-                handleBrokerSubscribe((BrokerSubscribeMessage) message);
+                pubSubRouter.handleBrokerSubscribe((BrokerSubscribeMessage) message);
                 break;
             case UNSUBSCRIBE:
-                handleUnsubscribe((UnsubscribeMessage) message);
+                pubSubRouter.handleUnsubscribe((UnsubscribeMessage) message);
                 break;
             case BROKER_UNSUBSCRIBE:
-                handleBrokerUnsubscribe((BrokerUnsubscribeMessage) message);
+                pubSubRouter.handleBrokerUnsubscribe((BrokerUnsubscribeMessage) message);
                 break;
             case PUBLISH:
-                handlePublish((PublishMessage) message);
+                pubSubRouter.handlePublish((PublishMessage) message);
                 break;
             case BROKER_PUBLISH:
-                handleBrokerPublish((BrokerPublishMessage) message);
+                pubSubRouter.handleBrokerPublish((BrokerPublishMessage) message);
                 break;
             case ACK:
                 handleAcknowledgement((AckMessage) message);
@@ -239,10 +280,37 @@ public class Broker {
             case HEARTBEAT:
                 updateHeartbeat(message.getSenderId());
                 break;
+            case JOIN_CLUSTER:
+                raftEngine.getState().onMessageReceived(message);
+                break;
+            case JOIN_CLUSTER_ACK:
+                raftEngine.handleJoinClusterAck((JoinClusterAckMessage) message);
+                break;
+            case REDIRECT_TO_LEADER:
+                handleRedirectToLeader((RedirectToLeaderMessage) message);
+                break;
+            case APPEND_ENTRY_ACK:
+                raftEngine.handleAppendEntryAck((AppendEntryAckMessage) message);
+                break;
+            case COMMIT_ENTRY:
+                raftEngine.commitEntry(((CommitEntryMessage) message).getLogIndex());
+                break;
+            case REQUEST_VOTE:
+                raftEngine.handleRequestVote((RequestVoteMessage) message);
+                break;
+            case REQUEST_VOTE_ACK:
+                raftEngine.handleRequestVoteAck((RequestVoteAckMessage) message);
+                break;
+
             default:
                 System.err.println("Unknown message type received.");
         }
     }
+
+    //------------------------------------------------------------
+    //------------------------------------------------------------
+    //------------------------------------------------------------
+
 
     private void handleSubscribe(SubscribeMessage msg) {
         String clientId = msg.getSenderId();
@@ -449,6 +517,11 @@ public class Broker {
         }
     }
 
+    //------------------------------------------------------------
+    //------------------------------------------------------------
+    //------------------------------------------------------------
+
+
     void handleAcknowledgement(AckMessage msg) {
         String senderId = msg.getSenderId();
         updateHeartbeat(senderId);
@@ -472,6 +545,23 @@ public class Broker {
         scheduler.scheduleAtFixedRate(this::sendHeartbeat, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
+    // todo modify implementation with new Leader heartbeat
+    //   old version below
+
+    public void sendHeartbeat() {
+        if (crashed) return;
+        if (raftEngine.getRole() != BrokerRole.LEADER)
+            return;
+
+        HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(), raftEngine.getCurrentTerm());
+        for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
+            handler.send(hm);
+            handler.updateHeartbeat();
+            raftEngine.sendAppendEntriesToFollower(handler.getNodeId());
+        }
+    }
+
+    /*
     private void sendHeartbeat() {
         HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis());
 
@@ -479,6 +569,8 @@ public class Broker {
             handler.send(hm);
         }
     }
+
+    */
 
     // ------------------------------------------------------------------
     // Heartbeat checker
@@ -495,6 +587,58 @@ public class Broker {
                 handler.forceDisconnect();
             }
         }
+    }
+
+    private void startElectionTimeoutChecker() {
+        scheduler.scheduleAtFixedRate(this::checkElectionTimeout, raftEngine.getElectionTimeoutMs(), 10, TimeUnit.MILLISECONDS);
+    }
+
+    private void checkElectionTimeout() {
+        raftEngine.checkElectionTimeout();
+    }
+
+    public void updateLeaderHeartbeat() {
+        raftEngine.updateLeaderHeartbeat();
+    }
+
+    public synchronized void startElection() {
+        raftEngine.startElection();
+    }
+
+    public synchronized void handleRequestVote(RequestVoteMessage msg) {
+        raftEngine.handleRequestVote(msg);
+    }
+
+    public synchronized void handleRequestVoteAck(RequestVoteAckMessage msg) {
+        raftEngine.handleRequestVoteAck(msg);
+    }
+
+    public synchronized void becomeFollower(int term, String leaderId) {
+        raftEngine.becomeFollower(term, leaderId);
+    }
+
+    public synchronized void replicateToFollowers(Message msg) throws Exception {
+        raftEngine.replicateToFollowers(msg);
+    }
+
+    public synchronized void sendAppendEntriesToFollower(String followerId) {
+        raftEngine.sendAppendEntriesToFollower(followerId);
+    }
+
+    public synchronized void handleAppendEntry(AppendEntryMessage msg) throws Exception {
+        raftEngine.handleAppendEntry(msg);
+    }
+
+    public synchronized void handleAppendEntryAck(AppendEntryAckMessage msg) throws Exception {
+        raftEngine.handleAppendEntryAck(msg);
+    }
+
+    public synchronized void commitEntry(int logIndex) {
+        raftEngine.commitEntry(logIndex);
+    }
+
+    public void applyToLocalState(Message message) {
+        pubSubRouter.applyToLocalState(message);
     }
 
     // ------------------------------------------------------------------
@@ -530,7 +674,7 @@ public class Broker {
     // ACK helpers
     // ------------------------------------------------------------------
 
-    void sendAck(String nodeId, String msgId) {
+    public void sendAck(String nodeId, String msgId) {
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(nodeId);
 
         if (handler != null) {
@@ -549,6 +693,23 @@ public class Broker {
     // Client lifecycle
     // ------------------------------------------------------------------
 
+    public void redirectClientToLeader(String clientId) {
+        if (raftEngine.getLeaderHost() == null || raftEngine.getLeaderClientPort() <= 0) {
+            System.err.println(BROKER_ID + ": cannot redirect client " + clientId + " — leader address unknown");
+            return;
+        }
+        long seq = brokerCounter.incrementAndGet();
+        RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(
+                BROKER_ID, seq, System.currentTimeMillis(),
+                raftEngine.getLeaderHost(), raftEngine.getLeaderPort(), raftEngine.getLeaderClientPort());
+        ConnectionHandler handler = connectionRegistry.getConnectionHandler(clientId);
+        if (handler != null) {
+            handler.send(redirect);
+            System.out.println(BROKER_ID + " redirecting client " + clientId
+                    + " to leader at " + raftEngine.getLeaderHost() + ":" + raftEngine.getLeaderClientPort());
+        }
+    }
+
     /**
      * Called by ClientHandler when a client connects (first time or reconnect).
      * On reconnect: updates the handler and delivers any buffered offline messages.
@@ -559,10 +720,15 @@ public class Broker {
 
         if (isReconnect) {
             System.out.println("Client " + clientId + " reconnected. Delivering offline messages…");
-            deliverOfflineMessages(clientId);
+            pubSubRouter.deliverOfflineMessages(clientId);
         } else {
             System.out.println("Client " + clientId + " connected for the first time.");
         }
+        if (raftEngine.getRole() == BrokerRole.FOLLOWER) redirectClientToLeader(clientId);
+    }
+
+    public String getBrokerId() {
+        return BROKER_ID;
     }
 
     /**
@@ -609,16 +775,7 @@ public class Broker {
     public void onClientDisconnection(String clientId) {
         // keep record, drop handler
         connectionRegistry.markClientOffline(clientId);
-
-        // clean non-durable subs
-        for (String topic : topicSubscribersTable.getNonDurableSubscriptions(clientId)) {
-            boolean removedTopicOfInterest = topicSubscribersTable.removeClientSubscription(topic, clientId);
-
-            if (removedTopicOfInterest) {
-                forwardUnsubscribeMessage(topic, BROKER_ID, null);
-            }
-        }
-
+        pubSubRouter.onClientDisconnection(clientId);
         // topicSubscribersTable.removeNonDurableSubscriptions(clientId); // clean non-durable subs
     }
 
@@ -673,30 +830,130 @@ public class Broker {
     }
 
     // ------------------------------------------------------------------
-    // Broker-to-broker topic sharing
+    // Cluster lifecycle
     // ------------------------------------------------------------------
 
-    private void shareTopicSubscribers(BrokerHandler handler) {
-        topicSubscribersTable.getTopics().forEach(topic -> {
-            // communicate all topics this broker is interested into
-            if (!topicSubscribersTable.getInterestedClients(topic).isEmpty()) {
-                long brokerSeqNum = brokerCounter.incrementAndGet();
-                long currentTime = System.currentTimeMillis();
-                BrokerSubscribeMessage sm = new BrokerSubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, BROKER_ID, topic);
+    public void createCluster() {
+        raftEngine.createCluster();
+    }
 
-                ackTracker.trackDelivery(sm, Collections.singleton(handler.getNodeId()));
-                handler.send(sm);
-            }
+    public void joinCluster(String host, int port) throws Exception {
+        if (raftEngine.getRole() != BrokerRole.SOLO) {
+            System.err.println("joinCluster() chiamato su un broker che non è SOLO (ruolo attuale: " + raftEngine.getRole() + ")");
+            return;
+        }
 
-            // communicate all topics other brokers are interested into
-            topicSubscribersTable.getInterestedBrokers(topic).forEach(interestedBroker -> {
-                long brokerSeqNum = brokerCounter.incrementAndGet();
-                long currentTime = System.currentTimeMillis();
-                BrokerSubscribeMessage sm = new BrokerSubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, interestedBroker, topic);
+        BrokerHandler handler = connectToPeer(host, port);
 
-                ackTracker.trackDelivery(sm, Collections.singleton(handler.getNodeId()));
-                handler.send(sm);
-            });
-        });
+        long seq = brokerCounter.incrementAndGet();
+        JoinClusterMessage joinMsg = new JoinClusterMessage(BROKER_ID, seq, System.currentTimeMillis());
+        handler.send(joinMsg);
+
+        System.out.println(BROKER_ID + " ha inviato JoinClusterMessage a " + host + ":" + port);
+    }
+
+    public void handleJoinClusterRequest(JoinClusterMessage msg) {
+        raftEngine.handleJoinClusterRequest(msg);
+    }
+
+    private void handleRedirectToLeader(RedirectToLeaderMessage msg) throws Exception {
+        System.out.println(BROKER_ID + " rediretto al leader " + msg.getLeaderHost() + ":" + msg.getLeaderPort());
+        joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
+    }
+
+    public void appendToWal(Message msg) throws Exception {
+        wal.append(msg);
+    }
+
+    public ExecutorService getExecutor() {
+        return executor;
+    }
+
+    //----------------------------------------------------------
+    // TEST FUNCTIONS
+    //----------------------------------------------------------
+
+    public int getCurrentTerm() {
+        return raftEngine.getCurrentTerm();
+    }
+
+    public synchronized int getLastLogIndex() {
+        return raftEngine.getLastLogIndex();
+    }
+
+    public synchronized int getLastLogTerm() {
+        return raftEngine.getLastLogTerm();
+    }
+
+    public BrokerRole getRole() {
+        return raftEngine.getRole();
+    }
+
+    public int getCommitIndex() {
+        return raftEngine.getCommitIndex();
+    }
+
+    public int getLastApplied() {
+        return raftEngine.getLastApplied();
+    }
+
+    public boolean isSubscribed(String clientId, String topic) {
+        return topicSubscribersTable.getInterestedClients(topic).contains(clientId);
+    }
+
+    public synchronized void crash() {
+        if (crashed) {
+            System.out.println("[" + BROKER_ID + "] already crashed — ignoring duplicate crash()");
+            return;
+        }
+
+        System.out.println("\n╔══════════════════════════════════════════╗");
+        System.out.println(  "║  CRASH: " + BROKER_ID
+                + " (term=" + raftEngine.getCurrentTerm() + ", role=" + raftEngine.getRole() + ")");
+        System.out.println(  "╚══════════════════════════════════════════╝\n");
+
+        crashed = true;
+        raftEngine.setState(new SoloState(this));
+        new ArrayList<>(connectionRegistry.getConnectedBrokerHandlers())
+                .forEach(h -> h.forceDisconnect());
+        try {
+            if (clientServerSocket != null) clientServerSocket.close();
+        } catch (IOException e) {
+
+        }
+        try {
+            if (brokerServerSocket != null)
+                brokerServerSocket.close();
+        }
+        catch (IOException e) {
+
+        }
+
+        System.out.println("[CRASH] " + BROKER_ID + " is now offline. " + "Remaining brokers will detect the absence and elect a new leader.");
+    }
+
+    public void resurrect(String peerHost, int peerBrokerPort) throws Exception {
+        if (!crashed) {
+            System.out.println("[" + BROKER_ID + "] not crashed — ignoring resurrect()");
+            return;
+        }
+
+        System.out.println("\n╔══════════════════════════════════════════╗");
+        System.out.println(  "║  RESURRECT: " + BROKER_ID + " coming back online...");
+        System.out.println(  "╚══════════════════════════════════════════╝\n");
+
+        crashed = false;
+        raftEngine.reset();
+        executor.submit(this::runClientListener);
+        executor.submit(this::runBrokerListener);
+
+        Thread.sleep(500);
+
+        joinCluster(peerHost, peerBrokerPort);
+        System.out.println("[RESURRECT] " + BROKER_ID + " sent join request — waiting for cluster acceptance...");
+    }
+
+    public String getCurrentLeaderId() {
+        return raftEngine.getCurrentLeaderId();
     }
 }
