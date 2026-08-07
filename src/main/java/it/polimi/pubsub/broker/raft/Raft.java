@@ -36,7 +36,7 @@ public class Raft {
     private final int CLIENT_PORT;
     private final Broker broker;
     private final ConnectionRegistry connectionRegistry;
-    private final AtomicLong brokerCounter;
+    private final AtomicLong brokerCounter;   // todo check atomicity
 
     private volatile BrokerState state;
     private String clusterId;

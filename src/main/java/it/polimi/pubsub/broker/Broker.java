@@ -13,7 +13,6 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -307,221 +306,6 @@ public class Broker {
         }
     }
 
-    //------------------------------------------------------------
-    //------------------------------------------------------------
-    //------------------------------------------------------------
-
-
-    private void handleSubscribe(SubscribeMessage msg) {
-        String clientId = msg.getSenderId();
-        updateHeartbeat(clientId);
-
-        String subscribeMessageId = msg.getMessageId();
-        boolean newMessage = messageCache.asMap().putIfAbsent(subscribeMessageId, true) == null;
-
-        if (newMessage) {
-            String topic = msg.getTopic();
-
-            // Pass durable flag through to the table
-            boolean newTopicOfInterest = topicSubscribersTable.addClientSubscription(topic, clientId, msg.isDurable());
-
-            if (newTopicOfInterest) {
-                forwardSubscribeMessage(topic, BROKER_ID, null);
-            }
-        }
-
-        // send an acknowledgment to the client
-        sendAck(clientId, subscribeMessageId);
-    }
-
-    private void handleBrokerSubscribe(BrokerSubscribeMessage msg) {
-        String senderId = msg.getSenderId();
-        updateHeartbeat(senderId);
-
-        String messageId = msg.getMessageId();
-        boolean newMessage = messageCache.asMap().putIfAbsent(messageId, true) == null;
-
-        if (newMessage) {
-            String topic = msg.getTopic();
-            String subbedBroker = msg.getInterestedBrokerId(); // original broker which subscribed
-
-            if (subbedBroker.equals(BROKER_ID)) {
-                sendAck(senderId, msg.getMessageId());
-                return;
-            }
-
-            boolean newBrokerSubscription = topicSubscribersTable.addBrokerSubscription(topic, subbedBroker, senderId);
-
-            if (newBrokerSubscription)
-                forwardSubscribeMessage(topic, subbedBroker, senderId);
-        }
-
-        sendAck(senderId, msg.getMessageId());
-    }
-
-    private void forwardSubscribeMessage(String topic, String subbedBrokerId, String previousHopId) {
-        long brokerSeqNum = brokerCounter.incrementAndGet();
-        long currentTime = System.currentTimeMillis();
-        BrokerSubscribeMessage sm = new BrokerSubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, subbedBrokerId, topic);
-
-        for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
-            // don't send back the message to the sender
-            if (!handler.getNodeId().equals(previousHopId))
-                handler.send(sm);
-        }
-    }
-
-    private void handleUnsubscribe(UnsubscribeMessage msg) {
-        String clientId = msg.getSenderId();
-        updateHeartbeat(clientId);
-
-        String unsubscribeMessageId = msg.getMessageId();
-        boolean newMessage = messageCache.asMap().putIfAbsent(unsubscribeMessageId, true) == null;
-
-        if (newMessage) {
-            String topic = msg.getTopic();
-
-            boolean removedTopicOfInterest = topicSubscribersTable.removeClientSubscription(topic, clientId);
-
-            if (removedTopicOfInterest) {
-                forwardUnsubscribeMessage(topic, BROKER_ID, null);
-            }
-        }
-
-        // send acknowledgement to the client
-        sendAck(clientId, unsubscribeMessageId);
-    }
-
-    private void handleBrokerUnsubscribe(BrokerUnsubscribeMessage msg) {
-        String senderId = msg.getSenderId();
-        updateHeartbeat(senderId);
-
-        String messageId = msg.getMessageId();
-        boolean newMessage = messageCache.asMap().putIfAbsent(messageId, true) == null;
-
-        if (newMessage) {
-            String topic = msg.getTopic();
-            String unsubscribedBrokerId = msg.getInterestedBrokerId(); // original broker which unsubscribed
-
-            // broker received its unsubscription message back
-            if (msg.getInterestedBrokerId().equals(BROKER_ID)) {
-                sendAck(senderId, msg.getMessageId());
-                return;
-            }
-
-            boolean removedBrokerSubscription = topicSubscribersTable.removeBrokerSubscription(topic, unsubscribedBrokerId);
-
-            if (removedBrokerSubscription) {
-                forwardUnsubscribeMessage(topic, unsubscribedBrokerId, senderId);
-            }
-        }
-
-        // send acknowledgement to the broker
-        sendAck(senderId, msg.getMessageId());
-    }
-
-    private void forwardUnsubscribeMessage(String topic, String unsubscribedBrokerId, String previousHopId) {
-        long brokerSeqNum = brokerCounter.incrementAndGet();
-        long currentTime = System.currentTimeMillis();
-        BrokerUnsubscribeMessage sm = new BrokerUnsubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, unsubscribedBrokerId, topic);
-
-        for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
-            // don't send back the message to the sender
-            if (!handler.getNodeId().equals(previousHopId))
-                handler.send(sm);
-        }
-    }
-
-    private void handlePublish(PublishMessage msg) {
-        String publisherId = msg.getSenderId();
-        updateHeartbeat(publisherId);
-
-        String publishMessageId = msg.getMessageId();
-        boolean newMessage = messageCache.asMap().putIfAbsent(publishMessageId, true) == null;
-
-        if (newMessage) {
-            // forward the message to interested clients and brokers
-            forwardPublishMessage(msg);
-        }
-
-        // send acknowledgment to the publisher
-        sendAck(publisherId, msg.getMessageId());
-    }
-
-    private void handleBrokerPublish(BrokerPublishMessage msg) {
-        String brokerId = msg.getSenderId();
-        updateHeartbeat(brokerId);
-
-        String publishMessageId = msg.getOriginalMessageId();
-        boolean newMessage = messageCache.asMap().putIfAbsent(publishMessageId, true) == null;
-
-        if (newMessage) {
-            forwardPublishMessage(msg.getOriginalMessage());
-        }
-
-        // send acknowledgment to the broker which forwarded the message
-        sendAck(brokerId, msg.getMessageId());
-    }
-
-    /**
-     * Deliver a publish message to all interested clients and brokers.
-     *
-     * For clients:
-     *   - ONLINE -> send directly via their handler
-     *   - OFFLINE + durable -> buffer in OfflineMessageStore for delivery on reconnect
-     *   - OFFLINE + non-durable -> drop (original behaviour)
-     */
-    private void forwardPublishMessage(PublishMessage msg) {
-        String topic = msg.getTopic();
-        Set<String> interestedClients = topicSubscribersTable.getInterestedClients(topic);
-        Set<String> interestedBrokersNextHops = topicSubscribersTable.getNextHopOfInterestedBrokers(topic);
-
-        // Forward to peer brokers (unchanged)
-        if (!interestedBrokersNextHops.isEmpty()) {
-            long brokerSeqNum = brokerCounter.incrementAndGet();
-            long currentTime  = System.currentTimeMillis();
-            BrokerPublishMessage brokerMsg = new BrokerPublishMessage(BROKER_ID, brokerSeqNum, currentTime, msg);
-
-            ackTracker.trackDelivery(brokerMsg, interestedBrokersNextHops);
-
-            for (String nextHop : interestedBrokersNextHops) {
-                BrokerHandler handler = connectionRegistry.getBrokerHandler(nextHop);
-                if (handler != null)
-                    handler.send(brokerMsg);
-            }
-        }
-
-        // Forward to local clients
-        if (!interestedClients.isEmpty()) {
-            ackTracker.trackDelivery(msg, interestedClients); // todo maybe track delivery only when the handler != null (when the client it's not disconnected)
-
-            for (String clientId : interestedClients) {
-                ClientHandler handler = connectionRegistry.getClientHandler(clientId);
-
-                if (handler != null) {
-                    // Client is online: deliver directly
-                    handler.send(msg);
-                } else if (topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
-                    // Client is offline but durable: buffer for later delivery
-                    System.out.println("[OfflineStore] Buffering message "
-                            + msg.getMessageId() + " for offline client " + clientId);
-                    try {
-                        offlineStore.enqueue(clientId, msg);
-                    } catch (Exception e) {
-                        System.err.println("[OfflineStore] Failed to buffer message for "
-                                + clientId + ": " + e.getMessage());
-                    }
-                }
-                // Non-durable offline client: message is dropped (original behaviour)
-            }
-        }
-    }
-
-    //------------------------------------------------------------
-    //------------------------------------------------------------
-    //------------------------------------------------------------
-
-
     void handleAcknowledgement(AckMessage msg) {
         String senderId = msg.getSenderId();
         updateHeartbeat(senderId);
@@ -715,6 +499,10 @@ public class Broker {
      * On reconnect: updates the handler and delivers any buffered offline messages.
      */
     public void addClientToRegistry(String clientId, ClientHandler handler) {
+        if (raftEngine.getRole() == BrokerRole.FOLLOWER) {
+            redirectClientToLeader(clientId);
+            return;
+        }
         boolean isReconnect = connectionRegistry.isKnownClient(clientId);
         connectionRegistry.registerClient(clientId, handler); // always replaces stale handler
 
@@ -724,7 +512,6 @@ public class Broker {
         } else {
             System.out.println("Client " + clientId + " connected for the first time.");
         }
-        if (raftEngine.getRole() == BrokerRole.FOLLOWER) redirectClientToLeader(clientId);
     }
 
     public String getBrokerId() {
