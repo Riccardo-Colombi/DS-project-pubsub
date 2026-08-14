@@ -30,6 +30,7 @@ import it.polimi.pubsub.messages.brokerMessages.*;
         @JsonSubTypes.Type(value = CommitEntryMessage.class, name = "COMMIT_ENTRY"),
         @JsonSubTypes.Type(value = RequestVoteMessage.class, name = "REQUEST_VOTE"),
         @JsonSubTypes.Type(value = RequestVoteAckMessage.class, name = "REQUEST_VOTE_ACK"),
+        @JsonSubTypes.Type(value = PendingDeliveryMessage.class, name = "SNAPSHOT_PENDING_DELIVERY"),
 })
 
 // TODO Update this to be coherent with Raft

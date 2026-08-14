@@ -19,6 +19,8 @@ import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -66,14 +68,20 @@ public class Broker {
     private final int CLIENT_PORT;
     private final int BROKER_PORT;
 
-    private final AtomicInteger testCountForSnapshot = new AtomicInteger(0);
+    private static final long ACK_TIMEOUT_MS                = 5000;
+    private static final long RETRY_INTERVAL_MS             = 2000;
+    private static final long HEARTBEAT_TIMEOUT_MS          = 25000;
+    private static final long HEARTBEAT_CHECK_INTERVAL_MS   = 3000;
+    private static final long HEARTBEAT_INTERVAL_MS         = 3000;
+    private static final long CACHE_LIFETIME                = 2;
 
-    private static final long ACK_TIMEOUT_MS              = 5000;
-    private static final long RETRY_INTERVAL_MS           = 2000;
-    private static final long HEARTBEAT_TIMEOUT_MS        = 25000;
-    private static final long HEARTBEAT_CHECK_INTERVAL_MS = 3000;
-    private static final long HEARTBEAT_INTERVAL_MS       = 3000;
-    private static final long CACHE_LIFETIME              = 2;
+    // Added in case of high traffic scenario (in this project is not needed, but hypothetically is good)
+    private final AtomicInteger messagesSinceLastCheck = new AtomicInteger(0);
+    private static final int SIZE_CHECK_INTERVAL            = 50;
+
+    private static final long SNAPSHOT_SIZE_THRESHOLD_BYTES = 5 * 1024 * 1024; // 5MB
+
+    private final ReentrantReadWriteLock stateLock = new ReentrantReadWriteLock();
 
     private final Raft raftEngine;
     private final PubSubRouter pubSubRouter;
@@ -201,6 +209,13 @@ public class Broker {
                     }
                     break;
 
+                case SNAPSHOT_PENDING_DELIVERY:
+                    PendingDeliveryMessage pdm = (PendingDeliveryMessage) msg;
+                    if (!pdm.getPendingSubscribers().isEmpty()) {
+                        ackTracker.trackDelivery(pdm.getOriginalMessage(), pdm.getPendingSubscribers());
+                    }
+                    break;
+
                 case ACK:
                     AckMessage ack = (AckMessage) msg;
                     ackTracker.handleAck(ack.getAcknowledgedMessageId(), ack.getSenderId());
@@ -216,41 +231,39 @@ public class Broker {
     }
 
     public void onMessageReceived(Message message) throws Exception {
-
         if (crashed) return;
 
-        if (message.getType() != MessageType.HEARTBEAT
-                && message.getType() != MessageType.APPEND_ENTRY
-                && message.getType() != MessageType.APPEND_ENTRY_ACK
-                && message.getType() != MessageType.COMMIT_ENTRY
-                && message.getType() != MessageType.REQUEST_VOTE
-                && message.getType() != MessageType.REQUEST_VOTE_ACK) {
-            testCountForSnapshot.incrementAndGet();
+        stateLock.writeLock().lock();
+        try {
+            if (message.getType() != MessageType.HEARTBEAT
+                    && message.getType() != MessageType.APPEND_ENTRY
+                    && message.getType() != MessageType.APPEND_ENTRY_ACK
+                    && message.getType() != MessageType.COMMIT_ENTRY
+                    && message.getType() != MessageType.REQUEST_VOTE
+                    && message.getType() != MessageType.REQUEST_VOTE_ACK) {
 
-            //todo check this out
-            // //testCountForSnapshot.incrementAndGet();
-            //            int prev = testCountForSnapshot.getAndUpdate(n -> n >= SNAPSHOT_THRESHOLD ? 0 : n + 1);
+                wal.append(message);
 
-            wal.append(message);
+                System.out.println("Message received - " + "Broker: " + BROKER_ID +
+                        ", message ID: " + message.getSequenceNumber() +
+                        ", sender ID: " + message.getSenderId() +
+                        ", message type: " + message.getType());
+            }
 
-            System.out.println("Message received - " + "Broker: " + BROKER_ID +
-                    ", message ID: " + message.getSequenceNumber() +
-                    ", sender ID: " + message.getSenderId() +
-                    ", message type: " + message.getType());
+            raftEngine.getState().onMessageReceived(message);
+        } finally {
+            stateLock.writeLock().unlock();
         }
 
-        raftEngine.getState().onMessageReceived(message);
+        // Counter for extra "optimization"
+        if (messagesSinceLastCheck.incrementAndGet() >= SIZE_CHECK_INTERVAL) {
+            messagesSinceLastCheck.set(0);
 
-        // todo not atomic, multiple thread could read 4 at almost the same time and take multiple snapshot (probably creating problems)
-        if (testCountForSnapshot.get() >= 4) {
-            testCountForSnapshot.set(0);
-            takeSnapshot();
+            // Trigger size-based: check the dimension of the file on disk
+            if (wal.getSize() >= SNAPSHOT_SIZE_THRESHOLD_BYTES) {
+                takeSnapshot();
+            }
         }
-
-        // todo check this out
-        // if (prev >= SNAPSHOT_THRESHOLD) {
-        //                takeSnapshot();
-        //            }
     }
 
     public void dispatchMessage(Message message) throws Exception {
@@ -329,9 +342,6 @@ public class Broker {
         scheduler.scheduleAtFixedRate(this::sendHeartbeat, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
-    // todo modify implementation with new Leader heartbeat
-    //   old version below
-
     public void sendHeartbeat() {
         if (crashed) return;
         if (raftEngine.getRole() != BrokerRole.LEADER)
@@ -353,7 +363,6 @@ public class Broker {
             handler.send(hm);
         }
     }
-
     */
 
     // ------------------------------------------------------------------
@@ -583,37 +592,52 @@ public class Broker {
     // todo add brokers info in snapshot
     // todo takeSnapshot and onMessageReceived could run at the same time, so the snapshot could lose some message
     //      we could lock the structure needed in snapshot and message received
-    private synchronized void takeSnapshot() throws Exception {
-        List<Message> snapshotState = new java.util.ArrayList<>();
-        long currentTime = System.currentTimeMillis();
-
-        // Saving Subscribe Table
-        for (String topic : topicSubscribersTable.getTopics()) {
-            // saving brokers subscriptions information
-            for (Map.Entry<String, String> entry : topicSubscribersTable.getInterestedBrokersInfo(topic).entrySet()) {
-                String interestedBrokerId = entry.getKey();
-                String nextHopId = entry.getValue();
-
-                snapshotState.add(new BrokerSubscribeMessage(nextHopId, 0, currentTime, interestedBrokerId, topic));
+    private void takeSnapshot() throws Exception {
+        stateLock.writeLock().lock();
+        try {
+            // Check is some other threads already did the snapshot.
+            // The check is done by analyzing if the file is small enough.
+            if (wal.getSize() < SNAPSHOT_SIZE_THRESHOLD_BYTES) {
+                return;
             }
 
-            // saving clients subscription information
-            for (String clientId : topicSubscribersTable.getInterestedClients(topic)) {
-                // Persist the durable flag so recovery restores it correctly
-                boolean durable = topicSubscribersTable.isDurableSubscriber(clientId, topic);
-                snapshotState.add(new SubscribeMessage(clientId, 0, currentTime, topic, durable));
+            List<Message> snapshotState = new java.util.ArrayList<>();
+            long currentTime = System.currentTimeMillis();
+
+            // Saving Subscribe Table
+            for (String topic : topicSubscribersTable.getTopics()) {
+                // Saving brokers subscriptions information
+                for (Map.Entry<String, String> entry : topicSubscribersTable.getInterestedBrokersInfo(topic).entrySet()) {
+                    String interestedBrokerId = entry.getKey();
+                    String nextHopId = entry.getValue();
+
+                    snapshotState.add(new BrokerSubscribeMessage(nextHopId, 0, currentTime, interestedBrokerId, topic));
+                }
+
+                // Saving clients subscription information
+                for (String clientId : topicSubscribersTable.getInterestedClients(topic)) {
+                    // Persist the durable flag so recovery restores it correctly
+                    boolean durable = topicSubscribersTable.isDurableSubscriber(clientId, topic);
+                    snapshotState.add(new SubscribeMessage(clientId, 0, currentTime, topic, durable));
+                }
             }
-        }
 
-        // TODO probably doesn't work, this way i'm saving messages i'm trying to send to the client,
-        //  but when broker runs recoverState it sees them as if they where messages received by it,
-        //  review the idea
-        // Saving Pending Messages
-        for (PendingMessage pending : ackTracker.getPendingMessages()) {
-            snapshotState.add(pending.getMessage());
-        }
+            // TODO probably doesn't work, this way i'm saving messages i'm trying to send to the client,
+            //  but when broker runs recoverState it sees them as if they where messages received by it,
+            //  review the idea
+            // Saving Pending Messages
+            for (PendingMessage pending : ackTracker.getPendingMessages()) {
+                snapshotState.add(new PendingDeliveryMessage(
+                        BROKER_ID, 0, currentTime,
+                        pending.getMessage(),
+                        new java.util.HashSet<>(pending.getPendingSubscribers())
+                ));
+            }
 
-        wal.snapshot(snapshotState);
+            wal.snapshot(snapshotState);
+        } finally {
+            stateLock.writeLock().unlock();
+        }
     }
 
     // ------------------------------------------------------------------

@@ -19,4 +19,5 @@ public enum MessageType {
     COMMIT_ENTRY,
     REQUEST_VOTE,
     REQUEST_VOTE_ACK,
+    SNAPSHOT_PENDING_DELIVERY
 }
