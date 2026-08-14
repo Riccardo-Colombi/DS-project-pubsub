@@ -518,15 +518,22 @@ public class Broker {
             redirectClientToLeader(clientId);
             return;
         }
-        boolean isReconnect = connectionRegistry.isKnownClient(clientId);
-        connectionRegistry.registerClient(clientId, handler); // always replaces stale handler
 
-        if (isReconnect) {
-            System.out.println("Client " + clientId + " reconnected. Delivering offline messages…");
-            pubSubRouter.deliverOfflineMessages(clientId);
-        } else {
-            System.out.println("Client " + clientId + " connected for the first time.");
+        stateLock.readLock().lock();
+        try {
+            boolean isReconnect = connectionRegistry.isKnownClient(clientId);
+            connectionRegistry.registerClient(clientId, handler); // always replaces stale handler
+
+            if (isReconnect) {
+                System.out.println("Client " + clientId + " reconnected. Delivering offline messages…");
+                pubSubRouter.deliverOfflineMessages(clientId);
+            } else {
+                System.out.println("Client " + clientId + " connected for the first time.");
+            }
+        } finally {
+            stateLock.readLock().unlock();
         }
+
     }
 
     public String getBrokerId() {
@@ -575,10 +582,16 @@ public class Broker {
      * and removes only non-durable subscriptions.
      */
     public void onClientDisconnection(String clientId) {
-        // keep record, drop handler
-        connectionRegistry.markClientOffline(clientId);
-        pubSubRouter.onClientDisconnection(clientId);
-        // topicSubscribersTable.removeNonDurableSubscriptions(clientId); // clean non-durable subs
+        stateLock.readLock().lock();
+        try{
+            // keep record, drop handler
+            connectionRegistry.markClientOffline(clientId);
+            pubSubRouter.onClientDisconnection(clientId);
+            // topicSubscribersTable.removeNonDurableSubscriptions(clientId); // clean non-durable subs
+
+        } finally {
+            stateLock.readLock().unlock();
+        }
     }
 
     /* TODO add updated topic subscriber table to snapshot and maybe
