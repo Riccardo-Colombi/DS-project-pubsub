@@ -12,6 +12,7 @@ import it.polimi.pubsub.broker.states.FollowerState;
 import it.polimi.pubsub.broker.states.LeaderState;
 import it.polimi.pubsub.broker.states.SoloState;
 import it.polimi.pubsub.broker.storage.LogEntry;
+import it.polimi.pubsub.broker.storage.RaftMetadata;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.brokerMessages.AppendEntryAckMessage;
 import it.polimi.pubsub.messages.brokerMessages.AppendEntryMessage;
@@ -500,6 +501,19 @@ public class Raft {
                 + " — term=" + currentTerm + ", leader=" + currentLeaderId + ", role=FOLLOWER");
     }
 
+    public synchronized void restoreState(RaftMetadata metadata) {
+        if (metadata == null) return;
+
+        this.currentTerm  = metadata.getCurrentTerm();
+        this.votedFor     = metadata.getVotedFor();
+        this.commitIndex  = metadata.getCommitIndex();
+        this.lastApplied  = metadata.getLastApplied();
+
+        System.out.println(BROKER_ID + " restored Raft's state from snapshot: "
+                + "term=" + currentTerm + ", votedFor=" + votedFor
+                + ", commitIndex=" + commitIndex + ", lastApplied=" + lastApplied);
+    }
+
     public void reset() {
         electionVotes = 0;
         votedFor = null;
@@ -514,5 +528,9 @@ public class Raft {
 
     public String getCurrentLeaderId() {
         return currentLeaderId;
+    }
+
+    public String getVotedFor() {
+        return votedFor;
     }
 }

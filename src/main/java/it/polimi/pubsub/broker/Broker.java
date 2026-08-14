@@ -3,6 +3,7 @@ package it.polimi.pubsub.broker;
 import it.polimi.pubsub.broker.components.BrokerHandler;
 import it.polimi.pubsub.broker.components.*;
 import it.polimi.pubsub.broker.raft.Raft;
+import it.polimi.pubsub.broker.storage.RaftMetadata;
 import it.polimi.pubsub.broker.storage.WriteAheadLog;
 import it.polimi.pubsub.messages.*;
 import it.polimi.pubsub.messages.brokerMessages.*;
@@ -19,7 +20,6 @@ import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.github.benmanes.caffeine.cache.Cache;
@@ -105,6 +105,12 @@ public class Broker {
         this.pubSubRouter = new PubSubRouter(BROKER_ID, this, topicSubscribersTable, offlineStore, connectionRegistry, ackTracker, brokerCounter);
 
         offlineStore.recover();
+
+        RaftMetadata savedRaftState = wal.readRaftMetadata();
+        if (savedRaftState != null) {
+            raftEngine.restoreState(savedRaftState);
+        }
+
         recoverState();
     }
 
@@ -635,6 +641,13 @@ public class Broker {
             }
 
             wal.snapshot(snapshotState);
+
+            RaftMetadata raftMetadata = new RaftMetadata(
+                    raftEngine.getCurrentTerm(),
+                    raftEngine.getVotedFor(),
+                    raftEngine.getCommitIndex(),
+                    raftEngine.getLastApplied());
+            wal.writeRaftMetadata(raftMetadata);
         } finally {
             stateLock.writeLock().unlock();
         }

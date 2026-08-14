@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * TODO
@@ -34,9 +35,14 @@ public class WriteAheadLog {
     private final MessageSerializer serializer;
     private BufferedWriter writer;
 
+    private final File metadataFile;
+    private final ObjectMapper metadataMapper;
+
     public WriteAheadLog(String filePath) throws IOException {
         this.logFile = new File(filePath);
         this.serializer = new MessageSerializer();
+        this.metadataFile = new File(filePath + ".meta.json");
+        this.metadataMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
 //        File parent = logFile.getParentFile();
 //        if (parent != null && !parent.exists()) {
@@ -142,6 +148,35 @@ public class WriteAheadLog {
             } catch (IOException e) {
                 throw new IOException("Fatal error: not able to reopen WAL after snapshot", e);
             }
+        }
+    }
+
+    // Writes the Raft state to disk atomically. It must be called in conjunction with snapshot()
+    public synchronized void writeRaftMetadata(RaftMetadata metadata) throws IOException {
+        File temp = new File(metadataFile.getAbsolutePath() + ".tmp");
+
+        try {
+            metadataMapper.writeValue(temp, metadata);
+            Files.move(temp.toPath(), metadataFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            if (temp.exists()) temp.delete();
+            throw e;
+        }
+    }
+
+    // Reads the saved Raft state, if it exists. Returns null on first run
+    // (no snapshot taken yet) or if the file is missing/corrupt (is safe
+    // although not optimal).
+    public synchronized RaftMetadata readRaftMetadata() {
+        if (!metadataFile.exists()) return null;
+
+        try {
+            return metadataMapper.readValue(metadataFile, RaftMetadata.class);
+        } catch (IOException e) {
+            System.err.println("[WAL] Metadata Raft corrupt or missing, ignored: " + e.getMessage());
+            return null;
         }
     }
 
