@@ -508,10 +508,12 @@ public class Raft {
         this.votedFor     = metadata.getVotedFor();
         this.commitIndex  = metadata.getCommitIndex();
         this.lastApplied  = metadata.getLastApplied();
+        this.clusterId    = metadata.getClusterId();
 
         System.out.println(BROKER_ID + " restored Raft's state from snapshot: "
                 + "term=" + currentTerm + ", votedFor=" + votedFor
-                + ", commitIndex=" + commitIndex + ", lastApplied=" + lastApplied);
+                + ", commitIndex=" + commitIndex + ", lastApplied=" + lastApplied
+                + ", clusterId=" + clusterId );
     }
 
     public void reset() {
@@ -533,4 +535,8 @@ public class Raft {
     public String getVotedFor() {
         return votedFor;
     }
+    public String getClusterId() {
+        return clusterId;
+    }
+
 }

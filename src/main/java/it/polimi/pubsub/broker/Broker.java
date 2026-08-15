@@ -13,10 +13,7 @@ import it.polimi.pubsub.broker.states.*;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -85,6 +82,7 @@ public class Broker {
 
     private final Raft raftEngine;
     private final PubSubRouter pubSubRouter;
+    private final List<BrokerAddress> restoredPeers;
 
     public Broker(String brokerId, int brokerPort, int clientPort,
                   String walFilePath, String offlineStorePath) throws Exception {
@@ -109,6 +107,9 @@ public class Broker {
         RaftMetadata savedRaftState = wal.readRaftMetadata();
         if (savedRaftState != null) {
             raftEngine.restoreState(savedRaftState);
+            this.restoredPeers = savedRaftState.getKnownPeers();
+        } else {
+            this.restoredPeers = Collections.emptyList();
         }
 
         recoverState();
@@ -122,6 +123,8 @@ public class Broker {
             startElectionTimeoutChecker(); //todo check if works
             executor.submit(this::runClientListener);
             executor.submit(this::runBrokerListener);
+
+            attemptClusterRejoin();
         } catch (Exception e) {
             System.err.println("Fatal error: " + e.getMessage());
         }
@@ -172,6 +175,25 @@ public class Broker {
         } catch (Exception e) {
             System.err.println("TcpServer error: " + e.getMessage());
         }
+    }
+
+    private void attemptClusterRejoin() {
+        if (restoredPeers == null || restoredPeers.isEmpty()) return;
+
+        executor.submit(() -> {
+            for (BrokerAddress peer : restoredPeers) {
+                try {
+                    System.out.println(BROKER_ID + ": trying to re-enter in the cluster through the help of: " + peer.getBrokerId());
+                    joinCluster(peer.getHost(), peer.getBrokerPort());
+                    return; // Sent request without exception of connection. Not "I'm in the cluster."
+                } catch (Exception e) {
+                    System.err.println(BROKER_ID + ": peer " + peer.getBrokerId()
+                            + " not reachable (" + e.getMessage() + "), trying the next one.");
+                }
+            }
+            System.err.println(BROKER_ID + ": no known peer reachable. "
+                    + "Broker alone till external join.");
+        });
     }
 
     public BrokerHandler connectToPeer(String brokerHost, int brokerPort) throws Exception {
@@ -250,10 +272,11 @@ public class Broker {
 
                 wal.append(message);
 
-                System.out.println("Message received - " + "Broker: " + BROKER_ID +
+                // TODO: restore after test
+                /* System.out.println("Message received - " + "Broker: " + BROKER_ID +
                         ", message ID: " + message.getSequenceNumber() +
                         ", sender ID: " + message.getSenderId() +
-                        ", message type: " + message.getType());
+                        ", message type: " + message.getType()); */
             }
 
             raftEngine.getState().onMessageReceived(message);
@@ -655,11 +678,19 @@ public class Broker {
 
             wal.snapshot(snapshotState);
 
+            List<BrokerAddress> clusterPeers = connectionRegistry.getClusterMembers().stream()
+                    .map(h -> new BrokerAddress(h.getNodeId(), h.getRemoteHost(), h.getRemoteBrokerPort()))
+                    .toList();
+            // Use of getClusterMembers() [filtered on isClusterMember() == true] because it saves only members o the
+            // cluster raft instead of broker connections that are generic/volatile.
+
             RaftMetadata raftMetadata = new RaftMetadata(
                     raftEngine.getCurrentTerm(),
                     raftEngine.getVotedFor(),
                     raftEngine.getCommitIndex(),
-                    raftEngine.getLastApplied());
+                    raftEngine.getLastApplied(),
+                    raftEngine.getClusterId(),
+                    clusterPeers);
             wal.writeRaftMetadata(raftMetadata);
         } finally {
             stateLock.writeLock().unlock();
