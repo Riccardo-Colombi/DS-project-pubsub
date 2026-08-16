@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import it.polimi.pubsub.messages.PublishMessage;
+import it.polimi.pubsub.network.MessageSerializer;
 
 import java.io.File;
 import java.io.IOException;
@@ -28,6 +29,7 @@ public class OfflineMessageStore {
 
     private final File baseDir;
     private final ObjectMapper mapper;
+    private final MessageSerializer serializer;
 
     // In-memory queue: clientId -> ordered list of pending messages
     private final ConcurrentHashMap<String, LinkedList<PublishMessage>> queues;
@@ -37,6 +39,7 @@ public class OfflineMessageStore {
     public OfflineMessageStore(String baseDirPath) throws IOException {
         this.baseDir = new File(baseDirPath);
         this.mapper  = new ObjectMapper();
+        this.serializer = new MessageSerializer();
         this.queues  = new ConcurrentHashMap<>();
         this.locks   = new ConcurrentHashMap<>();
 
@@ -93,13 +96,15 @@ public class OfflineMessageStore {
         for (File file : files) {
             String clientId = file.getName().replace(".json", "");
             try {
-                List<PublishMessage> messages = mapper.readValue(
-                        file,
-                        new TypeReference<List<PublishMessage>>() {}
-                );
-                LinkedList<PublishMessage> queue = new LinkedList<>(messages);
+                java.util.List<String> lines = mapper.readValue(file, new TypeReference<java.util.List<String>>() {});
+                LinkedList<PublishMessage> queue = new LinkedList<>();
+
+                for (String line : lines) {
+                    queue.add((PublishMessage) serializer.deserialize(line));
+                }
+
                 queues.put(clientId, queue);
-                System.out.println("[OfflineStore] Recovered " + messages.size()
+                System.out.println("[OfflineStore] Recovered " + queue.size()
                         + " messages for client: " + clientId);
             } catch (IOException e) {
                 System.err.println("[OfflineStore] Corrupted file for client "
@@ -130,13 +135,19 @@ public class OfflineMessageStore {
         File temp   = new File(target.getAbsolutePath() + ".tmp");
 
         try {
-            mapper.writeValue(temp, new ArrayList<>(queue));
+            java.util.List<String> serializedMessages = new java.util.ArrayList<>();
+
+            for (PublishMessage pm : queue) {
+                serializedMessages.add(serializer.serialize(pm));
+            }
+            mapper.writeValue(temp, serializedMessages);
+
             Files.move(temp.toPath(), target.toPath(),
                     StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
+        } catch (Exception e) {
             if (temp.exists()) temp.delete();
-            throw e;
+            throw new IOException(e);
         }
     }
 

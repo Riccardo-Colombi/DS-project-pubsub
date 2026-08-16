@@ -133,10 +133,11 @@ public class SnapshotTest {
 
         int payloadSize = 20_000; // 20 KB per messaggio
 
-        for (int i = 0; i < 300; i++) {
+        int numPublish = 500;
+        for (int i = 0; i < numPublish; i++) {
             byte[] payload = makePayload(payloadSize);
         }
-        Thread.sleep(1500); // lascia scattare almeno uno snapshot
+        Thread.sleep(4000); // lascia scattare almeno uno snapshot
 
         int termBeforeCrash = broker.getCurrentTerm();
         int commitIndexBeforeCrash = broker.getCommitIndex();
@@ -288,6 +289,7 @@ public class SnapshotTest {
                         client.publish(topic, payload);
                     }
 
+                    Thread.sleep(200); // the client has time to finish the transmission
                     client.disconnect(); // esercita anche il percorso onClientDisconnection
                 } catch (Exception e) {
                     System.err.println("ERRORE nel client concorrente " + id + ": " + e);
@@ -340,7 +342,7 @@ public class SnapshotTest {
             byte[] payload = makePayload(payloadSize);
             client.publish("cp-topic", payload);
         }
-        Thread.sleep(1500);
+        Thread.sleep(4000);
         client.disconnect();
 
         System.out.println("=== Crasho SOLO il follower (il leader resta up) ===");
