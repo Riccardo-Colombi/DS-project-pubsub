@@ -254,6 +254,8 @@ public class Broker {
                     ackTracker.handleAck(ack.getAcknowledgedMessageId(), ack.getSenderId());
                     break;
 
+                // TODO: BrokerPublishMessage and BrokerSubscribeMessage is not in here! Fix it.
+
                 default:
                     // This is for HEARTBEAT
                     break;
@@ -610,7 +612,7 @@ public class Broker {
      * and removes only non-durable subscriptions.
      */
     public void onClientDisconnection(String clientId) {
-        stateLock.readLock().lock();
+        getStateLock().readLock().lock();
         try{
             // keep record, drop handler
             connectionRegistry.markClientOffline(clientId);
@@ -620,6 +622,10 @@ public class Broker {
         } finally {
             stateLock.readLock().unlock();
         }
+    }
+
+    private ReentrantReadWriteLock getStateLock() {
+        return stateLock;
     }
 
     /* TODO add updated topic subscriber table to snapshot and maybe
@@ -636,9 +642,32 @@ public class Broker {
     // Snapshot
     // ------------------------------------------------------------------
 
-    // todo add brokers info in snapshot
-    // todo takeSnapshot and onMessageReceived could run at the same time, so the snapshot could lose some message
-    //      we could lock the structure needed in snapshot and message received
+    public List<Message> gatherStateForSnapshot() {
+        List<Message> snapshotState = new java.util.ArrayList<>();
+        long currentTime = System.currentTimeMillis();
+
+        // 1. Saves subscriptions
+        for (String topic : topicSubscribersTable.getTopics()) {
+            for (Map.Entry<String, String> entry : topicSubscribersTable.getInterestedBrokersInfo(topic).entrySet()) {
+                snapshotState.add(new BrokerSubscribeMessage(entry.getValue(), 0, currentTime, entry.getKey(), topic));
+            }
+            for (String clientId : topicSubscribersTable.getInterestedClients(topic)) {
+                boolean durable = topicSubscribersTable.isDurableSubscriber(clientId, topic);
+                snapshotState.add(new SubscribeMessage(clientId, 0, currentTime, topic, durable));
+            }
+        }
+
+        // 2. Saves pending messages
+        for (PendingMessage pending : ackTracker.getPendingMessages()) {
+            snapshotState.add(new PendingDeliveryMessage(
+                    BROKER_ID, 0, currentTime,
+                    pending.getMessage(),
+                    new java.util.HashSet<>(pending.getPendingSubscribers())
+            ));
+        }
+        return snapshotState;
+    }
+
     private void takeSnapshot() throws Exception {
         stateLock.writeLock().lock();
         try {
@@ -648,38 +677,7 @@ public class Broker {
                 return;
             }
 
-            List<Message> snapshotState = new java.util.ArrayList<>();
-            long currentTime = System.currentTimeMillis();
-
-            // Saving Subscribe Table
-            for (String topic : topicSubscribersTable.getTopics()) {
-                // Saving brokers subscriptions information
-                for (Map.Entry<String, String> entry : topicSubscribersTable.getInterestedBrokersInfo(topic).entrySet()) {
-                    String interestedBrokerId = entry.getKey();
-                    String nextHopId = entry.getValue();
-
-                    snapshotState.add(new BrokerSubscribeMessage(nextHopId, 0, currentTime, interestedBrokerId, topic));
-                }
-
-                // Saving clients subscription information
-                for (String clientId : topicSubscribersTable.getInterestedClients(topic)) {
-                    // Persist the durable flag so recovery restores it correctly
-                    boolean durable = topicSubscribersTable.isDurableSubscriber(clientId, topic);
-                    snapshotState.add(new SubscribeMessage(clientId, 0, currentTime, topic, durable));
-                }
-            }
-
-            // TODO probably doesn't work, this way i'm saving messages i'm trying to send to the client,
-            //  but when broker runs recoverState it sees them as if they where messages received by it,
-            //  review the idea
-            // Saving Pending Messages
-            for (PendingMessage pending : ackTracker.getPendingMessages()) {
-                snapshotState.add(new PendingDeliveryMessage(
-                        BROKER_ID, 0, currentTime,
-                        pending.getMessage(),
-                        new java.util.HashSet<>(pending.getPendingSubscribers())
-                ));
-            }
+            List<Message> snapshotState = gatherStateForSnapshot();
 
             wal.snapshot(snapshotState);
 
@@ -697,6 +695,9 @@ public class Broker {
                     raftEngine.getClusterId(),
                     clusterPeers);
             wal.writeRaftMetadata(raftMetadata);
+
+            // Empty the RAM memory or the ArrayList explodes.
+            raftEngine.clearLogInMemory();
         } finally {
             stateLock.writeLock().unlock();
         }

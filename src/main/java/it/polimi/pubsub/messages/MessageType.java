@@ -19,5 +19,9 @@ public enum MessageType {
     COMMIT_ENTRY,
     REQUEST_VOTE,
     REQUEST_VOTE_ACK,
-    SNAPSHOT_PENDING_DELIVERY
+    SNAPSHOT_PENDING_DELIVERY,
+
+    // For the LEADER -> FOLLOWER in case of snapshot and FOLLOWER not coherent
+    INSTALL_SNAPSHOT,
+    INSTALL_SNAPSHOT_ACK
 }

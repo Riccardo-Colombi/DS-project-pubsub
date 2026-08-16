@@ -14,14 +14,7 @@ import it.polimi.pubsub.broker.states.SoloState;
 import it.polimi.pubsub.broker.storage.LogEntry;
 import it.polimi.pubsub.broker.storage.RaftMetadata;
 import it.polimi.pubsub.messages.Message;
-import it.polimi.pubsub.messages.brokerMessages.AppendEntryAckMessage;
-import it.polimi.pubsub.messages.brokerMessages.AppendEntryMessage;
-import it.polimi.pubsub.messages.brokerMessages.CommitEntryMessage;
-import it.polimi.pubsub.messages.brokerMessages.JoinClusterAckMessage;
-import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
-import it.polimi.pubsub.messages.brokerMessages.RedirectToLeaderMessage;
-import it.polimi.pubsub.messages.brokerMessages.RequestVoteAckMessage;
-import it.polimi.pubsub.messages.brokerMessages.RequestVoteMessage;
+import it.polimi.pubsub.messages.brokerMessages.*;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -273,6 +266,18 @@ public class Raft {
 
         int nextInd = followerNextIndex.getOrDefault(followerId, raftLog.size() + 1);
 
+        // If the follower needs an index that is smaller than the first element
+        // we have in our in-memory log, it means the log was compacted.
+        // For now, if you clear the log on snapshot, nextInd would be out of bounds.
+        if (nextInd <= 0 || (raftLog.isEmpty() && commitIndex > 0)) {
+            try {
+                sendInstallSnapshotToFollower(followerId);
+            } catch (Exception e) {
+                System.err.println("Failed to send InstallSnapshot to " + followerId + ": " + e.getMessage());
+            }
+            return;
+        }
+
         if (nextInd > raftLog.size()) {
             return;
         }
@@ -296,7 +301,7 @@ public class Raft {
         }
         updateLeaderHeartbeat();
 
-        // TODO: ask why msg.getLeaderTerm() >= currentTerm. I also added "|| state.getRole() != BrokerRole.FOLLOWER"... is it intended?
+        // If you are not a FOLLOWER (when entering in the "handleAppendEntry"), then you are a CANDIDATE
         if (msg.getLeaderTerm() > currentTerm || state.getRole() != BrokerRole.FOLLOWER) {
             becomeFollower(msg.getLeaderTerm(), msg.getSenderId());
         }
@@ -338,6 +343,32 @@ public class Raft {
                 success, raftLog.size());
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(appendEntry.getSenderId());
         if (handler != null) handler.send(ack);
+    }
+
+    public synchronized void sendInstallSnapshotToFollower(String followerId) throws Exception {
+        BrokerHandler handler = connectionRegistry.getBrokerHandler(followerId);
+        if (handler == null) {
+            return;
+        }
+
+        try {
+            List<Message> currentState = broker.gatherStateForSnapshot();
+
+            int lastIncIndex = commitIndex;
+            int lastIncTerm = currentTerm;
+
+            long seq = brokerCounter.incrementAndGet();
+            InstallSnapshotMessage snapshotMsg = new InstallSnapshotMessage(
+                    BROKER_ID, seq, System.currentTimeMillis(),
+                    currentTerm, lastIncIndex, lastIncTerm, currentState
+            );
+
+            handler.send(snapshotMsg);
+            System.out.println(BROKER_ID + " is sending an InstallSnapshot to lagging follower " + followerId);
+        } catch (Exception e) {
+            System.err.println("Failed to send InstallSnapshot to " + followerId + ": " + e.getMessage());
+        }
+
     }
 
     public synchronized void handleAppendEntryAck(AppendEntryAckMessage msg) throws Exception {
@@ -539,6 +570,12 @@ public class Raft {
     }
     public String getClusterId() {
         return clusterId;
+    }
+
+    // Clear memory
+    public synchronized void clearLogInMemory() {
+        raftLog.clear();
+        System.out.println(BROKER_ID + " Log in RAM cleared after local snapshot.");
     }
 
 }

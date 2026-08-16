@@ -31,10 +31,9 @@ import it.polimi.pubsub.messages.brokerMessages.*;
         @JsonSubTypes.Type(value = RequestVoteMessage.class, name = "REQUEST_VOTE"),
         @JsonSubTypes.Type(value = RequestVoteAckMessage.class, name = "REQUEST_VOTE_ACK"),
         @JsonSubTypes.Type(value = PendingDeliveryMessage.class, name = "SNAPSHOT_PENDING_DELIVERY"),
+        @JsonSubTypes.Type(value = InstallSnapshotMessage.class, name = "INSTALL_SNAPSHOT"),
+        @JsonSubTypes.Type(value = InstallSnapshotAckMessage.class, name = "INSTALL_SNAPSHOT_ACK")
 })
-
-// TODO Update this to be coherent with Raft
-// Add term and index
 
 public abstract class Message {
 

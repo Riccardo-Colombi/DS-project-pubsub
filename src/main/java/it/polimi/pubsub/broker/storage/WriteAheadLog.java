@@ -11,23 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-/**
- * TODO
- * - How to empty the WAL?
- *      Checkpointing or snapshots: instead of emptying the WAL operation per operation, you stop accepting new
- *      messages and create a snapshot by tanking the TopicSubscribersTable and AckTracker and put in a snapshot.json file.
- *      Then rename it in wal.json.
- * - When to do it?
- *      Sized based: do this every time the file wal.json exceed 10MB in size.
- *      Count based: do this every time the broker appends M messages to the wal.json.
- *
- *  Note: how to clean wal.json file during startup: java -jar pubsub.jar broker --clean
- */
-
 // I decided to create a WAL file to save the state of a broker and append messages everytime instead of modifying it
 // every time there's a "new thing" or there is a "deletion operation".
-
-    // TODO Update this to be coherent with Raft
 
 public class WriteAheadLog {
 
@@ -115,8 +100,6 @@ public class WriteAheadLog {
 
     // TODO Snapshot managing methods
     // they are called by the broker when the conditions are met
-
-    // TODO Distributed Snapshot
 
     public synchronized void snapshot(List<Message> consolidatedState) throws Exception {
         File tempFile = new File(logFile.getAbsolutePath() + ".tmp");

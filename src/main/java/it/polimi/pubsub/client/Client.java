@@ -55,8 +55,7 @@ public class Client implements Publisher, Subscriber {
         this.currentPort   = brokerPort;
     }
 
-    // todo check if it will work during leader election
-
+    // TODO: check if delete
     public void enableAutoReconnect(boolean enable) {
         this.autoReconnect = enable;
     }
