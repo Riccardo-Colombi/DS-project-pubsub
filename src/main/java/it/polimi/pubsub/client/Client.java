@@ -228,7 +228,7 @@ public class Client implements Publisher, Subscriber {
 
     private void sendHeartbeat() {
         // added term = 0 so that brokers ignore clients heartbeats for updates
-        enqueue(new HeartbeatMessage(clientId, 0, System.currentTimeMillis(), 0));
+        enqueue(new HeartbeatMessage(clientId, 0, System.currentTimeMillis(), 0, null));
     }
 
     private void startRetryScheduler() {

@@ -9,7 +9,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 
 public class RaftTest {
 
-    private static void cleanDataDirectory(String dirPath) throws IOException {
+    public static void cleanDataDirectory(String dirPath) throws IOException {
         Path root = Paths.get(dirPath);
         if (!Files.exists(root)) {
             Files.createDirectories(root);

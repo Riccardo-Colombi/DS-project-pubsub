@@ -157,7 +157,8 @@ public class Raft {
         if (candidateTerm > currentTerm) {
             currentTerm = candidateTerm;
             votedFor = null;
-            state = new FollowerState(broker);
+            //state = new FollowerState(broker);
+            becomeFollower(currentTerm, msg.getSenderId());
         }
 
         boolean voteGranted = false;
@@ -245,7 +246,7 @@ public class Raft {
         electionVotes = 0;
         state = new FollowerState(broker);
         lastLeaderHeartbeatMs = System.currentTimeMillis();
-        System.out.println(BROKER_ID + " became FOLLOWER for term " + currentTerm);
+        System.out.println(BROKER_ID + " became FOLLOWER for term " + currentTerm + " for leader: " + leaderId );
     }
 
     public synchronized void replicateToFollowers(Message msg) throws Exception {
@@ -425,7 +426,7 @@ public class Raft {
     }
 
     public void handleJoinClusterRequest(JoinClusterMessage msg) {
-        System.out.println("Handling Join request from:" + msg.getSenderId() + "recived by" + this.BROKER_ID);
+        //System.out.println("Handling Join request from:" + msg.getSenderId() + "recived by" + this.BROKER_ID);
 
         String requesterId = msg.getSenderId();
 
