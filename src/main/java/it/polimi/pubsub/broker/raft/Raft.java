@@ -295,7 +295,9 @@ public class Raft {
             return;
         }
         updateLeaderHeartbeat();
-        if (msg.getLeaderTerm() >= currentTerm) {
+
+        // TODO: ask why msg.getLeaderTerm() >= currentTerm. I also added "|| state.getRole() != BrokerRole.FOLLOWER"... is it intended?
+        if (msg.getLeaderTerm() > currentTerm || state.getRole() != BrokerRole.FOLLOWER) {
             becomeFollower(msg.getLeaderTerm(), msg.getSenderId());
         }
 

@@ -3,10 +3,7 @@ package it.polimi.pubsub.network;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import it.polimi.pubsub.messages.Message;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.Socket;
 
 public class TcpConnection {
@@ -14,7 +11,7 @@ public class TcpConnection {
     private final Socket socket;
     private final MessageSerializer serializer;
     private final BufferedReader reader;
-    private final PrintWriter writer;
+    private final BufferedWriter writer;
 
     public TcpConnection(Socket socket) throws Exception {
         this.socket = socket;
@@ -24,12 +21,17 @@ public class TcpConnection {
         // BufferedReader reads text line-by-line until it sees \n
         this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
         // PrintWriter(..., true) enables auto-flushing and handles the \n appending
-        this.writer = new PrintWriter(socket.getOutputStream(), true);
+        this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
     }
 
-    public void send(Message message) throws Exception {
+    // Added synchronized because in case of big messages, a T1 must finish sending the whole stream
+    // before another T2 start sending his stream.
+    public synchronized void send(Message message) throws Exception {
         String jsonPayload = serializer.serialize(message);
-        writer.println(jsonPayload);
+        writer.write(jsonPayload);
+
+        writer.newLine();
+        writer.flush(); // Push the data through the socket immediately
     }
 
     public Message receive() throws IOException, JsonProcessingException {

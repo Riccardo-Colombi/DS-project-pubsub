@@ -284,9 +284,11 @@ public class Client implements Publisher, Subscriber {
     }
 
     private void handleIncomingPublish(PublishMessage msg) throws Exception {
-        System.out.println("Message received! Client: " + clientId +
+        // TODO: remove after test
+        /* System.out.println("Message received! Client: " + clientId +
                 "Topic: " + msg.getTopic() +
                 " Payload: " + new String(msg.getPayload()));
+         */
 
         // send ack back to broker
         long seqNum = sequenceCounter.incrementAndGet();

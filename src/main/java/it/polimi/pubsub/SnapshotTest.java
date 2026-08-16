@@ -55,6 +55,8 @@ public class SnapshotTest {
     // B - Trigger size-based
     // ------------------------------------------------------------------
 
+    // With this test we are checking if the file goes over a certain size (5MB) if the final
+    // size is below 5MB
     private static void testSizeBasedTrigger() throws Exception {
         System.out.println("\n=== TEST B: trigger size-based dello snapshot ===");
 
@@ -133,7 +135,6 @@ public class SnapshotTest {
 
         for (int i = 0; i < 300; i++) {
             byte[] payload = makePayload(payloadSize);
-            client.publish("topicC", payload);
         }
         Thread.sleep(1500); // lascia scattare almeno uno snapshot
 

@@ -207,8 +207,24 @@ public class TopicSubscribersTable {
         return topics != null && topics.contains(topic);
     }
 
+    // TODO: wtf... this method returns the durableSubscriptions!
+    /*
     public Set<String> getNonDurableSubscriptions(String subscriberId) {
         return durableSubscriptions.getOrDefault(subscriberId, Collections.emptySet());
+    }
+    */
+
+    public Set<String> getNonDurableSubscriptions(String subscriberId) {
+        Set<String> durableTopics = durableSubscriptions.getOrDefault(subscriberId, Collections.emptySet());
+        Set<String> nonDurableTopics = new java.util.HashSet<>();
+
+        // Search for a topic in which the client is present, but it's not durable
+        for (Map.Entry<String, TopicSubscriptions> entry : topicSubscribers.entrySet()) {
+            if (entry.getValue().getClients().contains(subscriberId) && !durableTopics.contains(entry.getKey())) {
+                nonDurableTopics.add(entry.getKey());
+            }
+        }
+        return nonDurableTopics;
     }
 
     // ------------------------------------------------------------------

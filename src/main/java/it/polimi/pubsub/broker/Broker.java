@@ -223,6 +223,11 @@ public class Broker {
                     SubscribeMessage sub = (SubscribeMessage) msg;
                     // Preserve the durable flag stored in the snapshot
                     topicSubscribersTable.addClientSubscription(sub.getTopic(), sub.getSenderId(), sub.isDurable());
+
+                    // Populate the connection registry with recovered durable clients.
+                    if (sub.isDurable()) {
+                        connectionRegistry.markClientOffline(sub.getSenderId());
+                    }
                     break;
 
                 case UNSUBSCRIBE:
