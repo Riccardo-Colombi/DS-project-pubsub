@@ -433,7 +433,7 @@ public class Raft {
             handler.send(snapshotMsg);
 
             // The follower sent the snapshot and the size was huge. The problem is that
-            // it took the FOLLOWER millisecond to send the ACK back. Now we force the 
+            // it took the FOLLOWER millisecond to send the ACK back. This fix the bug
             followerNextIndex.put(followerId, commitIndex + 1);
 
             System.out.println(BROKER_ID + " is sending an InstallSnapshot to lagging follower " + followerId);
