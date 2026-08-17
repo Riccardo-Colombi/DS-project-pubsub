@@ -266,10 +266,9 @@ public class Raft {
 
         int nextInd = followerNextIndex.getOrDefault(followerId, raftLog.size() + 1);
 
-        // If the follower needs an index that is smaller than the first element
-        // we have in our in-memory log, it means the log was compacted.
-        // For now, if you clear the log on snapshot, nextInd would be out of bounds.
-        if (nextInd <= 0 || (raftLog.isEmpty() && commitIndex > 0)) {
+        // If the requested index is <= 0, or if the requested entry was compacted (null command),
+        // we have a log hole and must send the snapshot.
+        if (nextInd <= 0 || (nextInd <= raftLog.size() && raftLog.get(nextInd - 1).getCommand() == null)) {
             try {
                 sendInstallSnapshotToFollower(followerId);
             } catch (Exception e) {
@@ -359,7 +358,10 @@ public class Raft {
         }
 
         // Clear our obsolete in-memory log
-        clearLogInMemory();
+        raftLog.clear();
+        for (int i = 0; i < msg.getLastIncludedIndex(); i++) {
+            raftLog.add(new LogEntry(msg.getLastIncludedTerm(), null));
+        }
 
         commitIndex = msg.getLastIncludedIndex();
         lastApplied = msg.getLastIncludedIndex();
@@ -430,8 +432,9 @@ public class Raft {
 
             handler.send(snapshotMsg);
 
-            // TODO: possible check that does not fix the problem of the spam of "leadDS is sending an InstallSnapshot to lagging follower follDS"
-            // followerNextIndex.put(followerId, commitIndex + 1);
+            // The follower sent the snapshot and the size was huge. The problem is that
+            // it took the FOLLOWER millisecond to send the ACK back. Now we force the 
+            followerNextIndex.put(followerId, commitIndex + 1);
 
             System.out.println(BROKER_ID + " is sending an InstallSnapshot to lagging follower " + followerId);
         } catch (Exception e) {
@@ -648,8 +651,14 @@ public class Raft {
 
     // Clear memory
     public synchronized void clearLogInMemory() {
-        raftLog.clear();
-        System.out.println(BROKER_ID + " Log in RAM cleared after local snapshot.");
+        for (int i = 0; i < commitIndex && i < raftLog.size(); i++) {
+            LogEntry oldEntry = raftLog.get(i);
+            if (oldEntry != null && oldEntry.getCommand() != null) {
+                raftLog.set(i, new LogEntry(oldEntry.getTerm(), null));
+            }
+        }
+
+        System.out.println(BROKER_ID + " Log payloads in RAM cleared up to index " + commitIndex);
     }
 
 }
