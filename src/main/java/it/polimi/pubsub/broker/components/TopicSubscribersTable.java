@@ -274,4 +274,13 @@ public class TopicSubscribersTable {
             return brokers.values().stream().collect(Collectors.toUnmodifiableSet());
         }
     }
+
+    // ------------------------------------------------------------------
+    // Extras
+    // ------------------------------------------------------------------
+
+    public void clear() {
+        topicSubscribers.clear();
+        durableSubscriptions.clear();
+    }
 }

@@ -349,6 +349,12 @@ public class Broker {
             case REQUEST_VOTE_ACK:
                 raftEngine.handleRequestVoteAck((RequestVoteAckMessage) message);
                 break;
+            case INSTALL_SNAPSHOT:
+                raftEngine.handleInstallSnapshot((InstallSnapshotMessage) message);
+                break;
+            case INSTALL_SNAPSHOT_ACK:
+                raftEngine.handleInstallSnapshotAck((InstallSnapshotAckMessage) message);
+                break;
 
             default:
                 System.err.println("Unknown message type received.");
@@ -698,6 +704,56 @@ public class Broker {
 
             // Empty the RAM memory or the ArrayList explodes.
             raftEngine.clearLogInMemory();
+        } finally {
+            stateLock.writeLock().unlock();
+        }
+    }
+
+    // Called by Raft when a Distributed Snapshot arrives from the Leader
+    public void installStateFromSnapshot(List<Message> snapshotState) throws Exception {
+        stateLock.writeLock().lock();
+        try {
+            topicSubscribersTable.clear();
+            ackTracker.clear();
+
+            // Rebuild memory using the Leader's snapshot
+            for (Message msg : snapshotState) {
+                if (msg.getType() == MessageType.SUBSCRIBE) {
+                    SubscribeMessage sub = (SubscribeMessage) msg;
+                    topicSubscribersTable.addClientSubscription(sub.getTopic(), sub.getSenderId(), sub.isDurable());
+                    if (sub.isDurable()) {
+                        connectionRegistry.markClientOffline(sub.getSenderId());
+                    }
+                } else if (msg.getType() == MessageType.BROKER_SUBSCRIBE) {
+                    BrokerSubscribeMessage bSub = (BrokerSubscribeMessage) msg;
+                    topicSubscribersTable.addBrokerSubscription(bSub.getTopic(), bSub.getInterestedBrokerId(), bSub.getSenderId());
+                } else if (msg.getType() == MessageType.SNAPSHOT_PENDING_DELIVERY) {
+                    PendingDeliveryMessage pdm = (PendingDeliveryMessage) msg;
+                    if (!pdm.getPendingSubscribers().isEmpty()) {
+                        ackTracker.trackDelivery(pdm.getOriginalMessage(), pdm.getPendingSubscribers());
+                    }
+                }
+            }
+
+            // Atomically replace the local WAL file with the new snapshot and update RaftMetadata
+            wal.snapshot(snapshotState);
+
+            List<BrokerAddress> clusterPeers = connectionRegistry.getClusterMembers().stream()
+                    .map(h -> new BrokerAddress(h.getNodeId(), h.getRemoteHost(), h.getRemoteBrokerPort()))
+                    .toList();
+
+            RaftMetadata raftMetadata = new RaftMetadata(
+                    raftEngine.getCurrentTerm(),
+                    raftEngine.getVotedFor(),
+                    raftEngine.getCommitIndex(),
+                    raftEngine.getLastApplied(),
+                    raftEngine.getClusterId(),
+                    clusterPeers);
+            wal.writeRaftMetadata(raftMetadata);
+
+            messagesSinceLastCheck.set(0);
+
+            System.out.println(BROKER_ID + " successfully installed distributed snapshot and synced with Leader.");
         } finally {
             stateLock.writeLock().unlock();
         }

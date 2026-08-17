@@ -72,4 +72,8 @@ public class AckTracker {
     public java.util.Collection<PendingMessage> getPendingMessages() {
         return unackedMessages.values();
     }
+
+    public void clear() {
+        unackedMessages.clear();
+    }
 }

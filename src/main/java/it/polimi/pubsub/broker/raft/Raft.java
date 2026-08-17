@@ -336,6 +336,71 @@ public class Raft {
         sendAppendEntryNack(msg, true);
     }
 
+    public synchronized void handleInstallSnapshot(InstallSnapshotMessage msg) throws Exception {
+        // Reject obsolete terms
+        if (msg.getLeaderTerm() < currentTerm) {
+            sendInstallSnapshotAck(msg.getSenderId());
+            return;
+        }
+
+        updateLeaderHeartbeat();
+
+        // Step down if we were a candidate or have an older term
+        if (msg.getLeaderTerm() > currentTerm || state.getRole() != BrokerRole.FOLLOWER) {
+            becomeFollower(msg.getLeaderTerm(), msg.getSenderId());
+        }
+
+        // Ignora se lo snapshot è effettivamente più vecchio del nostro commit,
+        // TRANNE se siamo appena nati (commitIndex == 0), nel qual caso
+        // accettiamo qualsiasi cosa ci mandi il Leader legittimo.
+        if (commitIndex > 0 && msg.getLastIncludedIndex() <= commitIndex) {
+            sendInstallSnapshotAck(msg.getSenderId());
+            return;
+        }
+
+        // Clear our obsolete in-memory log
+        clearLogInMemory();
+
+        commitIndex = msg.getLastIncludedIndex();
+        lastApplied = msg.getLastIncludedIndex();
+
+        broker.installStateFromSnapshot(msg.getStateMachineState());
+
+        sendInstallSnapshotAck(msg.getSenderId());
+    }
+
+    private void sendInstallSnapshotAck(String leaderId) {
+        long seq = brokerCounter.incrementAndGet();
+        InstallSnapshotAckMessage ack = new InstallSnapshotAckMessage(
+                BROKER_ID, seq, System.currentTimeMillis(),
+                currentTerm, commitIndex
+        );
+
+        ConnectionHandler handler = connectionRegistry.getConnectionHandler(leaderId);
+        if (handler != null) {
+            handler.send(ack);
+        }
+    }
+
+    public synchronized void handleAppendEntryAck(AppendEntryAckMessage msg) throws Exception {
+        broker.updateHeartbeat(msg.getSenderId());
+        String followerId = msg.getSenderId();
+
+        if (!msg.isSuccess()) {
+            int newNext = Math.max(1, msg.getAcknowledgedLogIndex() + 1);
+            followerNextIndex.put(followerId, newNext);
+            sendAppendEntriesToFollower(followerId);
+            return;
+        }
+
+        int ackedIndex = msg.getAcknowledgedLogIndex();
+        followerMatchIndex.merge(followerId, ackedIndex, Math::max);
+        followerNextIndex.put(followerId, followerMatchIndex.get(followerId) + 1);
+
+        tryCommit();
+        sendAppendEntriesToFollower(followerId);
+    }
+
     private void sendAppendEntryNack(AppendEntryMessage appendEntry, boolean success) {
         long seq = brokerCounter.incrementAndGet();
         AppendEntryAckMessage ack = new AppendEntryAckMessage(
@@ -364,6 +429,10 @@ public class Raft {
             );
 
             handler.send(snapshotMsg);
+
+            // TODO: possible check that does not fix the problem of the spam of "leadDS is sending an InstallSnapshot to lagging follower follDS"
+            // followerNextIndex.put(followerId, commitIndex + 1);
+
             System.out.println(BROKER_ID + " is sending an InstallSnapshot to lagging follower " + followerId);
         } catch (Exception e) {
             System.err.println("Failed to send InstallSnapshot to " + followerId + ": " + e.getMessage());
@@ -371,22 +440,27 @@ public class Raft {
 
     }
 
-    public synchronized void handleAppendEntryAck(AppendEntryAckMessage msg) throws Exception {
+    // Called on the LEADER when the follower successfully installed the snapshot
+    public synchronized void handleInstallSnapshotAck(InstallSnapshotAckMessage msg) {
         broker.updateHeartbeat(msg.getSenderId());
         String followerId = msg.getSenderId();
 
-        if (!msg.isSuccess()) {
-            int newNext = Math.max(1, msg.getAcknowledgedLogIndex() + 1);
-            followerNextIndex.put(followerId, newNext);
-            sendAppendEntriesToFollower(followerId);
+        if (msg.getTerm() > currentTerm) {
+            currentTerm = msg.getTerm();
+            becomeFollower(currentTerm, null);
             return;
         }
 
-        int ackedIndex = msg.getAcknowledgedLogIndex();
+        if (state.getRole() != BrokerRole.LEADER) return;
+
+        // The follower has successfully jumped to the snapshot index.
+        // Update its matchIndex and nextIndex accordingly.
+        int ackedIndex = msg.getLastIncludedIndex();
         followerMatchIndex.merge(followerId, ackedIndex, Math::max);
         followerNextIndex.put(followerId, followerMatchIndex.get(followerId) + 1);
 
-        tryCommit();
+        // Immediately try to send any new AppendEntries that arrived while
+        // the snapshot was transferring.
         sendAppendEntriesToFollower(followerId);
     }
 

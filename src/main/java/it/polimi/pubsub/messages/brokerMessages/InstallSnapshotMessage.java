@@ -1,5 +1,6 @@
 package it.polimi.pubsub.messages.brokerMessages;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.MessageType;
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -48,6 +49,7 @@ public class InstallSnapshotMessage extends Message {
 
 
     @Override
+    @JsonIgnore
     public MessageType getType() {
         return MessageType.INSTALL_SNAPSHOT;
     }

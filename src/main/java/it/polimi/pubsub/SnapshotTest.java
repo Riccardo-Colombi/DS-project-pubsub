@@ -47,6 +47,9 @@ public class SnapshotTest {
         Thread.sleep(1000);
 
         testClusterPeersAutoRejoin();
+        Thread.sleep(1000);
+
+        testDistributedSnapshot();
 
         System.out.println("\n=== Tutti i test lanciati. Controlla i CHECK: sopra. ===");
     }
@@ -364,6 +367,71 @@ public class SnapshotTest {
         System.out.println("CHECK: il ruolo NON deve essere rimasto SOLO. Se lo è, i peer non sono stati "
                 + "salvati nello snapshot oppure il rientro automatico allo startup non è scattato "
                 + "(vedi Broker.run() -> attemptClusterRejoin()).");
+
+        restartedFollower.crash();
+        leader.crash();
+    }
+
+    // ------------------------------------------------------------------
+    // E - Distributed Snapshot
+    // ------------------------------------------------------------------
+
+    private static void testDistributedSnapshot() throws Exception {
+        System.out.println("\n=== TEST E: Distributed Snapshot (InstallSnapshot RPC) ===");
+
+        String leaderWal = ROOT + "/DSNAP/wal_leader.log";
+        String leaderOffline = ROOT + "/DSNAP/offline_leader";
+        String followerWal = ROOT + "/DSNAP/wal_follower.log";
+        String followerOffline = ROOT + "/DSNAP/offline_follower";
+
+        Broker leader = new Broker("leadDS", 9196, 9186, leaderWal, leaderOffline);
+        leader.run();
+        Thread.sleep(300);
+        leader.createCluster();
+
+        Broker follower = new Broker("follDS", 9197, 9187, followerWal, followerOffline);
+        follower.run();
+        Thread.sleep(300);
+        follower.joinCluster("localhost", 9196);
+        Thread.sleep(800);
+
+        System.out.println("=== Disconnecting Follower ===");
+        follower.crash();
+        Thread.sleep(500);
+
+        System.out.println("=== Pushing heavy traffic to Leader to trigger local snapshot ===");
+        Client publisher = new Client("pubDS", "localhost", 9186);
+        publisher.connect();
+        Thread.sleep(300);
+        publisher.subscribeDurable("topicDS");
+
+        int payloadSize = 20_000;
+        int numPublish = 500;
+
+        for (int i = 0; i < numPublish; i++) {
+            publisher.publish("topicDS", makePayload(payloadSize));
+        }
+        Thread.sleep(4000);
+        publisher.disconnect();
+
+        int leaderCommitIndex = leader.getCommitIndex();
+        System.out.println("Leader commitIndex after log compaction: " + leaderCommitIndex);
+
+        System.out.println("=== Restarting Follower ===");
+        Broker restartedFollower = new Broker("follDS", 9197, 9187, followerWal, followerOffline);
+        restartedFollower.run();
+
+        restartedFollower.joinCluster("localhost", 9196);
+        Thread.sleep(800);
+
+        // Wait for the leader to send the InstallSnapshotMessage and the follower to install it
+        Thread.sleep(4000);
+
+        int followerCommitIndex = restartedFollower.getCommitIndex();
+        System.out.println("Follower commitIndex after synchronization: " + followerCommitIndex);
+
+        System.out.println("CHECK: The Follower's commitIndex should match the Leader's commitIndex (" + leaderCommitIndex + "), " +
+                "meaning it successfully installed the state via network.");
 
         restartedFollower.crash();
         leader.crash();
