@@ -76,6 +76,7 @@ public class Broker {
     private final AtomicInteger messagesSinceLastCheck = new AtomicInteger(0);
     private static final int SIZE_CHECK_INTERVAL            = 50;
 
+    // TODO: check if an Atomic Counter is better
     private static final long SNAPSHOT_SIZE_THRESHOLD_BYTES = 5 * 1024 * 1024; // 5MB
 
     private final ReentrantReadWriteLock stateLock = new ReentrantReadWriteLock();
@@ -99,8 +100,8 @@ public class Broker {
         this.scheduler             = Executors.newScheduledThreadPool(2);
         this.brokerCounter         = new AtomicLong(0);
 
-        this.raftEngine   = new Raft(BROKER_ID, BROKER_PORT, CLIENT_PORT, this, connectionRegistry, brokerCounter);
-        this.pubSubRouter = new PubSubRouter(BROKER_ID, this, topicSubscribersTable, offlineStore, connectionRegistry, ackTracker, brokerCounter);
+        this.raftEngine   = new Raft(BROKER_ID, BROKER_PORT, CLIENT_PORT, this, connectionRegistry);
+        this.pubSubRouter = new PubSubRouter(BROKER_ID, this, topicSubscribersTable, offlineStore, connectionRegistry, ackTracker);
 
         offlineStore.recover();
 
@@ -266,6 +267,7 @@ public class Broker {
     }
 
     public void onMessageReceived(Message message) throws Exception {
+
         if (crashed) return;
 
         stateLock.writeLock().lock();
@@ -509,6 +511,14 @@ public class Broker {
     }
 
     // ------------------------------------------------------------------
+    // Message helpers
+    // ------------------------------------------------------------------
+
+    public long getMessageCounter() {
+        return brokerCounter.incrementAndGet();
+    }
+
+    // ------------------------------------------------------------------
     // ACK helpers
     // ------------------------------------------------------------------
 
@@ -522,7 +532,7 @@ public class Broker {
     }
 
     AckMessage generateAck(String msgId) {
-        long brokerSeqNum = brokerCounter.incrementAndGet();
+        long brokerSeqNum = getMessageCounter();
         long currentTime = System.currentTimeMillis();
         return new AckMessage(BROKER_ID, brokerSeqNum, currentTime, msgId);
     }
@@ -536,11 +546,14 @@ public class Broker {
             System.err.println(BROKER_ID + ": cannot redirect client " + clientId + " — leader address unknown");
             return;
         }
-        long seq = brokerCounter.incrementAndGet();
+
+        long seq = getMessageCounter();
         RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
                 raftEngine.getLeaderHost(), raftEngine.getLeaderPort(), raftEngine.getLeaderClientPort());
+
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(clientId);
+
         if (handler != null) {
             handler.send(redirect);
             System.out.println(BROKER_ID + " redirecting client " + clientId
@@ -572,7 +585,6 @@ public class Broker {
         } finally {
             stateLock.readLock().unlock();
         }
-
     }
 
     public String getBrokerId() {
@@ -778,7 +790,7 @@ public class Broker {
 
         BrokerHandler handler = connectToPeer(host, port);
 
-        long seq = brokerCounter.incrementAndGet();
+        long seq = getMessageCounter();
         JoinClusterMessage joinMsg = new JoinClusterMessage(BROKER_ID, seq, System.currentTimeMillis());
         handler.send(joinMsg);
 
