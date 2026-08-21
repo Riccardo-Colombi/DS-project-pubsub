@@ -11,6 +11,8 @@ import it.polimi.pubsub.messages.brokerMessages.CommitEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
 import it.polimi.pubsub.messages.brokerMessages.RequestVoteMessage;
 
+import java.sql.SQLOutput;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class FollowerState implements BrokerState {
@@ -36,10 +38,14 @@ public class FollowerState implements BrokerState {
                 HeartbeatMessage hb = (HeartbeatMessage) message;
                 broker.updateHeartbeat(hb.getSenderId());
 
+                //System.out.println(broker.getBrokerId() + " is " + broker.getRole() + " for " + broker.getCurrentLeaderId());
+
                 if (hb.getTerm() >= broker.getCurrentTerm()) {
-                    broker.updateLeaderHeartbeat();
-                    if (!broker.getCurrentLeaderId().equals(hb.getSenderId()) || broker.getCurrentTerm() != hb.getTerm()) {
-                        broker.becomeFollower(hb.getTerm(), hb.getSenderId());
+                    if (broker.getCurrentLeaderId().equals(hb.getSenderId()))
+                        broker.updateLeaderHeartbeat();
+                    else if (broker.getCurrentTerm() != hb.getTerm() /* it will be an higher term */){
+                        // TODO UPDATE LEADER THAT HAS THIS HIGHER TERM
+                        broker.becomeFollower(hb.getTerm(), hb.getLeaderId());
                     }
                 }
                 break;

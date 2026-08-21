@@ -369,6 +369,9 @@ public class Broker {
     }
 
     public void updateHeartbeat(String senderId) {
+
+        System.out.println(this.BROKER_ID + " received heartbeat from " + senderId);
+
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(senderId);
 
         if (handler != null) {
@@ -386,10 +389,10 @@ public class Broker {
 
     public void sendHeartbeat() {
         if (crashed) return;
-        if (raftEngine.getRole() != BrokerRole.LEADER)
-            return;
+        //if (raftEngine.getRole() != BrokerRole.LEADER)
+        //    return;
 
-        HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(), raftEngine.getCurrentTerm());
+        HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(), raftEngine.getCurrentTerm(), getCurrentLeaderId());
         for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
             handler.send(hm);
             handler.updateHeartbeat();
@@ -779,7 +782,7 @@ public class Broker {
         JoinClusterMessage joinMsg = new JoinClusterMessage(BROKER_ID, seq, System.currentTimeMillis());
         handler.send(joinMsg);
 
-        System.out.println(BROKER_ID + " ha inviato JoinClusterMessage a " + host + ":" + port);
+        //System.out.println(BROKER_ID + " ha inviato JoinClusterMessage a " + host + ":" + port);
     }
 
     public void handleJoinClusterRequest(JoinClusterMessage msg) {
