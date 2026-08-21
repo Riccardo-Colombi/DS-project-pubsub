@@ -22,21 +22,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
-// TODO Update this to be coherent with Raft
 // State machine for roles LEADER, FOLLOWER, CANDIDATE
 // Add random timout for leader election
-
-// TODO RAFT
-//  state machine for different roles with different management of messages by each role
-//      a follower must redirect clients to the leader
-//      non blocking waits for election and ack wait
-//  once we create a broker he starts as a Leader so he can process messages even by himself
-//  methods for joining a cluster
-//      if cluster composed of 2 brokers instant election of one of them
-//      if composed by more then one check if request was send to a leader, if not redirect
-//  when a broker joins the cluster his information must be send to others broker of the cluster for election purposes
-//  timout for the leader
-//
 
 public class Broker {
 
@@ -281,11 +268,10 @@ public class Broker {
 
                 wal.append(message);
 
-                // TODO: restore after test
-                /* System.out.println("Message received - " + "Broker: " + BROKER_ID +
+                System.out.println("Message received - " + "Broker: " + BROKER_ID +
                         ", message ID: " + message.getSequenceNumber() +
                         ", sender ID: " + message.getSenderId() +
-                        ", message type: " + message.getType()); */
+                        ", message type: " + message.getType());
             }
 
             raftEngine.getState().onMessageReceived(message);

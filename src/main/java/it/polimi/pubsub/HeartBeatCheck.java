@@ -39,23 +39,20 @@ public class HeartBeatCheck {
 
         Thread.sleep(2000);
 
-        broker2.joinCluster("broker1", 8090);
-        broker3.joinCluster("broker1", 8090);
-        broker4.joinCluster("broker2", 8090);
-        broker5.joinCluster("broker3", 8090);
+        broker2.joinCluster("localhost", 8090);
+        broker3.joinCluster("localhost", 8090);
+        broker4.joinCluster("localhost", 8090);
+        broker5.joinCluster("localhost", 8090);
 
         Thread.sleep(2000);
-
         subscriber.subscribe("Cars");
-
         Thread.sleep(2000);
 
         broker1.crash();
-
-        Thread.sleep(10000);
+        Thread.sleep(5000);
 
         publisher.publish("Cars", "IT WORKS".getBytes());
 
-        broker1.resurrect("broker2", 8091);
+        broker1.resurrect("localhost", 8091);
     }
 }
