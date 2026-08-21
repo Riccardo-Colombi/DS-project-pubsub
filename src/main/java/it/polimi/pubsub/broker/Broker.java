@@ -358,7 +358,8 @@ public class Broker {
 
     public void updateHeartbeat(String senderId) {
 
-        System.out.println(this.BROKER_ID + " received heartbeat from " + senderId);
+        // TODO: error
+        // System.out.println(this.BROKER_ID + " received heartbeat from " + senderId);
 
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(senderId);
 
@@ -377,8 +378,10 @@ public class Broker {
 
     public void sendHeartbeat() {
         if (crashed) return;
-        //if (raftEngine.getRole() != BrokerRole.LEADER)
-        //    return;
+
+        // TODO: error
+        if (raftEngine.getRole() != BrokerRole.LEADER)
+            return;
 
         HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(), raftEngine.getCurrentTerm(), getCurrentLeaderId());
         for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {

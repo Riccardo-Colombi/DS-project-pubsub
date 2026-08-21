@@ -51,8 +51,10 @@ public class HeartBeatCheck {
         broker1.crash();
         Thread.sleep(5000);
 
+        broker1.resurrect("localhost", 8091);
+        Thread.sleep(5000);
+
         publisher.publish("Cars", "IT WORKS".getBytes());
 
-        broker1.resurrect("localhost", 8091);
     }
 }
