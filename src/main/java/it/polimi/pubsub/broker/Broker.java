@@ -74,6 +74,7 @@ public class Broker {
     private static final long HEARTBEAT_CHECK_INTERVAL_MS = 3000;
     private static final long HEARTBEAT_INTERVAL_MS       = 3000;
     private static final long CACHE_LIFETIME              = 2;
+    private static final long SNAPSHOT_THRESHOLD          = 4;
 
     private final Raft raftEngine;
     private final PubSubRouter pubSubRouter;
@@ -93,8 +94,8 @@ public class Broker {
         this.scheduler             = Executors.newScheduledThreadPool(2);
         this.brokerCounter         = new AtomicLong(0);
 
-        this.raftEngine   = new Raft(BROKER_ID, BROKER_PORT, CLIENT_PORT, this, connectionRegistry, brokerCounter);
-        this.pubSubRouter = new PubSubRouter(BROKER_ID, this, topicSubscribersTable, offlineStore, connectionRegistry, ackTracker, brokerCounter);
+        this.raftEngine   = new Raft(BROKER_ID, BROKER_PORT, CLIENT_PORT, this, connectionRegistry);
+        this.pubSubRouter = new PubSubRouter(BROKER_ID, this, topicSubscribersTable, offlineStore, connectionRegistry, ackTracker);
 
         offlineStore.recover();
         recoverState();
@@ -225,11 +226,8 @@ public class Broker {
                 && message.getType() != MessageType.COMMIT_ENTRY
                 && message.getType() != MessageType.REQUEST_VOTE
                 && message.getType() != MessageType.REQUEST_VOTE_ACK) {
-            testCountForSnapshot.incrementAndGet();
 
-            //todo check this out
-            // //testCountForSnapshot.incrementAndGet();
-            //            int prev = testCountForSnapshot.getAndUpdate(n -> n >= SNAPSHOT_THRESHOLD ? 0 : n + 1);
+            int prev = testCountForSnapshot.getAndUpdate(n -> n >= SNAPSHOT_THRESHOLD ? 0 : n + 1);
 
             wal.append(message);
 
@@ -237,20 +235,14 @@ public class Broker {
                     ", message ID: " + message.getSequenceNumber() +
                     ", sender ID: " + message.getSenderId() +
                     ", message type: " + message.getType());
+
+            // todo not atomic, multiple thread could read 4 at almost the same time and take multiple snapshot (probably creating problems)
+
+            if (prev >= SNAPSHOT_THRESHOLD)
+                takeSnapshot();
         }
 
         raftEngine.getState().onMessageReceived(message);
-
-        // todo not atomic, multiple thread could read 4 at almost the same time and take multiple snapshot (probably creating problems)
-        if (testCountForSnapshot.get() >= 4) {
-            testCountForSnapshot.set(0);
-            takeSnapshot();
-        }
-
-        // todo check this out
-        // if (prev >= SNAPSHOT_THRESHOLD) {
-        //                takeSnapshot();
-        //            }
     }
 
     public void dispatchMessage(Message message) throws Exception {
@@ -455,6 +447,14 @@ public class Broker {
     }
 
     // ------------------------------------------------------------------
+    // Message helpers
+    // ------------------------------------------------------------------
+
+    public long getMessageCounter() {
+        return brokerCounter.incrementAndGet();
+    }
+
+    // ------------------------------------------------------------------
     // ACK helpers
     // ------------------------------------------------------------------
 
@@ -468,7 +468,7 @@ public class Broker {
     }
 
     AckMessage generateAck(String msgId) {
-        long brokerSeqNum = brokerCounter.incrementAndGet();
+        long brokerSeqNum = getMessageCounter();
         long currentTime = System.currentTimeMillis();
         return new AckMessage(BROKER_ID, brokerSeqNum, currentTime, msgId);
     }
@@ -482,11 +482,14 @@ public class Broker {
             System.err.println(BROKER_ID + ": cannot redirect client " + clientId + " — leader address unknown");
             return;
         }
-        long seq = brokerCounter.incrementAndGet();
+
+        long seq = getMessageCounter();
         RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
                 raftEngine.getLeaderHost(), raftEngine.getLeaderPort(), raftEngine.getLeaderClientPort());
+
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(clientId);
+
         if (handler != null) {
             handler.send(redirect);
             System.out.println(BROKER_ID + " redirecting client " + clientId
@@ -632,7 +635,7 @@ public class Broker {
 
         BrokerHandler handler = connectToPeer(host, port);
 
-        long seq = brokerCounter.incrementAndGet();
+        long seq = getMessageCounter();
         JoinClusterMessage joinMsg = new JoinClusterMessage(BROKER_ID, seq, System.currentTimeMillis());
         handler.send(joinMsg);
 

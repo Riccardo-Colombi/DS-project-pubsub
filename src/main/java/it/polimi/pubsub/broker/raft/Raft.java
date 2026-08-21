@@ -36,7 +36,6 @@ public class Raft {
     private final int CLIENT_PORT;
     private final Broker broker;
     private final ConnectionRegistry connectionRegistry;
-    private final AtomicLong brokerCounter;   // todo check atomicity
 
     private volatile BrokerState state;
     private String clusterId;
@@ -58,13 +57,12 @@ public class Raft {
     private final ConcurrentHashMap<String, Integer> followerMatchIndex = new ConcurrentHashMap<>();
 
     public Raft(String brokerId, int brokerPort, int clientPort,
-                Broker broker, ConnectionRegistry connectionRegistry, AtomicLong brokerCounter) {
+                Broker broker, ConnectionRegistry connectionRegistry) {
         this.BROKER_ID = brokerId;
         this.BROKER_PORT = brokerPort;
         this.CLIENT_PORT = clientPort;
         this.broker = broker;
         this.connectionRegistry = connectionRegistry;
-        this.brokerCounter = brokerCounter;
         this.electionTimeoutMs = ThreadLocalRandom.current().nextLong(6000, 12001);
         this.state = new SoloState(broker);
     }
@@ -143,7 +141,7 @@ public class Raft {
 
         System.out.println(BROKER_ID + " starting election for term " + currentTerm);
 
-        long seq = brokerCounter.incrementAndGet();
+        long seq = broker.getMessageCounter();
         RequestVoteMessage rv = new RequestVoteMessage(BROKER_ID, seq, System.currentTimeMillis(), currentTerm, getLastLogIndex(), getLastLogTerm());
 
         for (BrokerHandler handler : connectionRegistry.getClusterMembers()) {
@@ -184,7 +182,7 @@ public class Raft {
     }
 
     private void sendRequestVoteAck(String candidateId, boolean granted) {
-        long seq = brokerCounter.incrementAndGet();
+        long seq = broker.getMessageCounter();
         RequestVoteAckMessage ack = new RequestVoteAckMessage(BROKER_ID, seq, System.currentTimeMillis(), currentTerm, granted);
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(candidateId);
         if (handler != null) {
@@ -279,7 +277,7 @@ public class Raft {
         int prevLogIndex = nextInd - 1;
         int prevLogTerm = (prevLogIndex > 0) ? raftLog.get(prevLogIndex - 1).getTerm() : 0;
         LogEntry entry = raftLog.get(nextInd - 1);
-        long seq = brokerCounter.incrementAndGet();
+        long seq = broker.getMessageCounter();
         AppendEntryMessage appendEntry = new AppendEntryMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
                 entry.getCommand(),
@@ -329,7 +327,7 @@ public class Raft {
     }
 
     private void sendAppendEntryNack(AppendEntryMessage appendEntry, boolean success) {
-        long seq = brokerCounter.incrementAndGet();
+        long seq = broker.getMessageCounter();
         AppendEntryAckMessage ack = new AppendEntryAckMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
                 success, raftLog.size());
@@ -384,7 +382,7 @@ public class Raft {
 
             broker.dispatchMessage(entry.getCommand());
 
-            long seq = brokerCounter.incrementAndGet();
+            long seq = broker.getMessageCounter();
             CommitEntryMessage commit = new CommitEntryMessage(
                     BROKER_ID, seq, System.currentTimeMillis(),
                     entry.getCommand(), lastApplied);
@@ -430,7 +428,7 @@ public class Raft {
         String requesterId = msg.getSenderId();
 
         if (!BROKER_ID.equals(currentLeaderId)) {
-            long seq = brokerCounter.incrementAndGet();
+            long seq = broker.getMessageCounter();
             RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(BROKER_ID, seq, System.currentTimeMillis(), leaderHost, leaderPort, leaderClientPort);
             broker.sendAck(requesterId, msg.getMessageId());
             connectionRegistry.getConnectionHandler(requesterId).send(redirect);
@@ -452,7 +450,7 @@ public class Raft {
         peers.forEach(p -> System.out.println("Peer in ack: " + p.getBrokerId()
                 + " -> " + p.getHost() + ":" + p.getBrokerPort()));
 
-        long seq = brokerCounter.incrementAndGet();
+        long seq = broker.getMessageCounter();
         JoinClusterAckMessage joinAck = new JoinClusterAckMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
                 clusterId, currentTerm, peers,

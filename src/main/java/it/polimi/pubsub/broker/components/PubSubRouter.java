@@ -26,7 +26,6 @@ public class PubSubRouter {
     private final OfflineMessageStore offlineStore;
     private final ConnectionRegistry connectionRegistry;
     private final AckTracker ackTracker;
-    private final AtomicLong brokerCounter;
 
     private final Cache<String, Boolean> messageCache = Caffeine.newBuilder()
             .maximumSize(10000)
@@ -37,8 +36,7 @@ public class PubSubRouter {
                         TopicSubscribersTable topicSubscribersTable,
                         OfflineMessageStore offlineStore,
                         ConnectionRegistry connectionRegistry,
-                        AckTracker ackTracker,
-                        AtomicLong brokerCounter) {
+                        AckTracker ackTracker) {
 
         this.BROKER_ID = brokerId;
         this.broker = broker;
@@ -46,7 +44,6 @@ public class PubSubRouter {
         this.offlineStore = offlineStore;
         this.connectionRegistry = connectionRegistry;
         this.ackTracker = ackTracker;
-        this.brokerCounter = brokerCounter;
     }
 
     public void handleSubscribe(SubscribeMessage msg) {
@@ -93,7 +90,7 @@ public class PubSubRouter {
     }
 
     private void forwardSubscribeMessage(String topic, String subbedBrokerId, String previousHopId) {
-        long brokerSeqNum = brokerCounter.incrementAndGet();
+        long brokerSeqNum = broker.getMessageCounter();
         long currentTime = System.currentTimeMillis();
         BrokerSubscribeMessage sm = new BrokerSubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, subbedBrokerId, topic);
 
@@ -155,7 +152,7 @@ public class PubSubRouter {
     }
 
     private void forwardUnsubscribeMessage(String topic, String unsubscribedBrokerId, String previousHopId) {
-        long brokerSeqNum = brokerCounter.incrementAndGet();
+        long brokerSeqNum = broker.getMessageCounter();
         long currentTime = System.currentTimeMillis();
         BrokerUnsubscribeMessage sm = new BrokerUnsubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, unsubscribedBrokerId, topic);
 
@@ -213,7 +210,7 @@ public class PubSubRouter {
 
         // Forward to peer brokers (unchanged)
         if (!interestedBrokersNextHops.isEmpty()) {
-            long brokerSeqNum = brokerCounter.incrementAndGet();
+            long brokerSeqNum = broker.getMessageCounter();
             long currentTime  = System.currentTimeMillis();
             BrokerPublishMessage brokerMsg = new BrokerPublishMessage(BROKER_ID, brokerSeqNum, currentTime, msg);
 
@@ -255,7 +252,7 @@ public class PubSubRouter {
     public void shareTopicSubscribers(BrokerHandler handler) {
         topicSubscribersTable.getTopics().forEach(topic -> {
             if (!topicSubscribersTable.getInterestedClients(topic).isEmpty()) {
-                long brokerSeqNum = brokerCounter.incrementAndGet();
+                long brokerSeqNum = broker.getMessageCounter();
                 long currentTime = System.currentTimeMillis();
                 BrokerSubscribeMessage sm = new BrokerSubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, BROKER_ID, topic);
 
@@ -264,7 +261,7 @@ public class PubSubRouter {
             }
 
             topicSubscribersTable.getInterestedBrokers(topic).forEach(interestedBroker -> {
-                long brokerSeqNum = brokerCounter.incrementAndGet();
+                long brokerSeqNum = broker.getMessageCounter();
                 long currentTime = System.currentTimeMillis();
                 BrokerSubscribeMessage sm = new BrokerSubscribeMessage(BROKER_ID, brokerSeqNum, currentTime, interestedBroker, topic);
 
