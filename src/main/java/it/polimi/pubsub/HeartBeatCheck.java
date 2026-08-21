@@ -19,13 +19,21 @@ public class HeartBeatCheck {
         Broker broker2 = new Broker("broker2", 8091, 8081, "data/wal_2.log", "data/offlineBroker2");
         Broker broker3 = new Broker("broker3", 8092, 8082, "data/wal_3.log", "data/offlineBroker3");
         Broker broker4 = new Broker("broker4", 8093, 8083, "data/wal_4.log", "data/offlineBroker4");
+        Broker broker5 = new Broker("broker5", 8094, 8084, "data/wal_5.log", "data/offlineBroker5");
+
+        Client publisher = new Client("publisher", "localhost", 8080);
+        Client subscriber = new Client("subscriber", "localhost", 8080);
 
         broker1.run();
         broker2.run();
         broker3.run();
         broker4.run();
+        broker5.run();
 
         Thread.sleep(2000);
+
+        publisher.connect();
+        subscriber.connect();
 
         broker1.createCluster();
 
@@ -34,12 +42,20 @@ public class HeartBeatCheck {
         broker2.joinCluster("broker1", 8090);
         broker3.joinCluster("broker1", 8090);
         broker4.joinCluster("broker2", 8090);
+        broker5.joinCluster("broker3", 8090);
 
         Thread.sleep(2000);
 
-        broker2.crash();
+        subscriber.subscribe("Cars");
 
-        Thread.sleep(200000);
+        Thread.sleep(2000);
 
+        broker1.crash();
+
+        Thread.sleep(10000);
+
+        publisher.publish("Cars", "IT WORKS".getBytes());
+
+        broker1.resurrect("broker2", 8091);
     }
 }
