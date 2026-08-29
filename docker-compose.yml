@@ -1,0 +1,38 @@
+
+services:
+  broker1:
+    build: .
+    container_name: broker1
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8080:8080"
+    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker1", "8090", "8080", "/app/data/wal_1.log", "/app/data/offline1"]
+    networks:
+      - pubsub-net
+
+  broker2:
+    build: .
+    container_name: broker2
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8081:8081"
+    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker2", "8091", "8081", "/app/data/wal_2.log", "/app/data/offline2"]
+    networks:
+      - pubsub-net
+
+  broker3:
+    build: .
+    container_name: broker3
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8082:8082"
+    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker3", "8092", "8082", "/app/data/wal_3.log", "/app/data/offline3"]
+    networks:
+      - pubsub-net
+
+networks:
+  pubsub-net:
+    driver: bridge

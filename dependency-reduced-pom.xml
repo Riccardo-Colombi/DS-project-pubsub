@@ -22,7 +22,7 @@
             <configuration>
               <transformers>
                 <transformer>
-                  <mainClass>it.polimi.pubsub.App</mainClass>
+                  <mainClass>it.polimi.pubsub.Main</mainClass>
                 </transformer>
               </transformers>
             </configuration>
