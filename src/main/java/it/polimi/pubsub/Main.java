@@ -20,6 +20,21 @@ public class Main {
         Broker broker = new Broker(brokerId, brokerPort, clientPort, walPath, offlinePath);
         broker.run();
 
+        if (args.length >= 6) {
+            String action = args[5];
+            if ("create".equals(action)) {
+                Thread.sleep(2000);
+                broker.createCluster();
+                System.out.println(brokerId + " created the cluster.");
+            } else if ("join".equals(action) && args.length >= 8) {
+                Thread.sleep(4000);
+                String targetHost = args[6];
+                int targetPort = Integer.parseInt(args[7]);
+                broker.joinCluster(targetHost, targetPort);
+                System.out.println(brokerId + " joined cluster at " + targetHost + ":" + targetPort);
+            }
+        }
+
         // Prevent the main thread from exiting, keeping the Docker container alive
         new CountDownLatch(1).await();
     }

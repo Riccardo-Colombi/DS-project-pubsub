@@ -7,7 +7,7 @@ services:
       - NET_ADMIN
     ports:
       - "8080:8080"
-    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker1", "8090", "8080", "/app/data/wal_1.log", "/app/data/offline1"]
+    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker1", "8090", "8080", "/app/data/wal_1.log", "/app/data/offline1", "create"]
     networks:
       - pubsub-net
 
@@ -18,7 +18,7 @@ services:
       - NET_ADMIN
     ports:
       - "8081:8081"
-    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker2", "8091", "8081", "/app/data/wal_2.log", "/app/data/offline2"]
+    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker2", "8091", "8081", "/app/data/wal_2.log", "/app/data/offline2", "join", "broker1", "8090"]
     networks:
       - pubsub-net
 
@@ -29,7 +29,7 @@ services:
       - NET_ADMIN
     ports:
       - "8082:8082"
-    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker3", "8092", "8082", "/app/data/wal_3.log", "/app/data/offline3"]
+    command: ["java", "-cp", "/app/app.jar", "it.polimi.pubsub.Main", "broker3", "8092", "8082", "/app/data/wal_3.log", "/app/data/offline3", "join", "broker1", "8090"]
     networks:
       - pubsub-net
 

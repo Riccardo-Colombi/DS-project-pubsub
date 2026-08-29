@@ -379,15 +379,14 @@ public class Broker {
     public void sendHeartbeat() {
         if (crashed) return;
 
-        // TODO: error
-        if (raftEngine.getRole() != BrokerRole.LEADER)
-            return;
-
         HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(), raftEngine.getCurrentTerm(), getCurrentLeaderId());
         for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
             handler.send(hm);
             handler.updateHeartbeat();
-            raftEngine.sendAppendEntriesToFollower(handler.getNodeId());
+
+            if(raftEngine.getRole() == BrokerRole.LEADER) {
+                raftEngine.sendAppendEntriesToFollower(handler.getNodeId());
+            }
         }
     }
 
