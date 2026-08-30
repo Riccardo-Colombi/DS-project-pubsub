@@ -1,11 +1,43 @@
-package it.polimi.pubsub;
+package it.polimi.pubsub.demos;
 
 import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.client.Client;
 
-import static it.polimi.pubsub.RaftTest.cleanDataDirectory;
+import java.io.IOException;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 
 public class HeartBeatCheck {
+
+    public static void cleanDataDirectory(String dirPath) throws IOException {
+        Path root = Paths.get(dirPath);
+        if (!Files.exists(root)) {
+            Files.createDirectories(root);
+            System.out.println("Data directory created (was missing): " + root.toAbsolutePath());
+            return;
+        }
+
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                if (exc != null) throw exc;
+                // Keep the root itself, delete every child directory
+                if (!dir.equals(root)) {
+                    Files.delete(dir);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+
+        System.out.println("Data directory cleaned: " + root.toAbsolutePath());
+    }
+
     public static void main(String[] args) throws Exception {
 
         cleanDataDirectory("data");

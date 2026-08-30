@@ -1,4 +1,4 @@
-package it.polimi.pubsub;
+package it.polimi.pubsub.demos;
 
 import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.client.Client;

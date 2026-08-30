@@ -23,39 +23,45 @@ public class LeaderState implements BrokerState {
     }
 
     @Override
-    public void onMessageReceived(Message message) throws Exception {
-        switch (message.getType()) {
-            case JOIN_CLUSTER:
-                broker.handleJoinClusterRequest((JoinClusterMessage) message);
-                break;
+    public void onMessageReceived(Message message) {
+        try {
+            switch (message.getType()) {
+                case JOIN_CLUSTER:
+                    broker.handleJoinClusterRequest((JoinClusterMessage) message);
+                    break;
 
-            case SUBSCRIBE, UNSUBSCRIBE, PUBLISH:
-                broker.replicateToFollowers(message);
-                break;
+                case SUBSCRIBE, UNSUBSCRIBE, PUBLISH:
+                    broker.replicateToFollowers(message);
+                    break;
 
-            case REQUEST_VOTE:
-                RequestVoteMessage rv = (RequestVoteMessage) message;
-                if (rv.getTerm() > broker.getCurrentTerm()) {
-                    broker.becomeFollower(rv.getTerm(), null);
-                    broker.handleRequestVote(rv);
-                }
-                break;
+                case REQUEST_VOTE:
+                    RequestVoteMessage rv = (RequestVoteMessage) message;
+                    if (rv.getTerm() > broker.getCurrentTerm()) {
+                        broker.becomeFollower(rv.getTerm(), null);
+                        broker.handleRequestVote(rv);
+                    }
+                    break;
 
-            case APPEND_ENTRY:
-                broker.handleAppendEntry((AppendEntryMessage) message);
-                break;
+                case APPEND_ENTRY:
+                    broker.handleAppendEntry((AppendEntryMessage) message);
+                    break;
 
-            case HEARTBEAT:
-                HeartbeatMessage hb = (HeartbeatMessage) message;
-                broker.updateHeartbeat(hb.getSenderId());
-                if (hb.isLeaderHeartbeat() && hb.getTerm() > broker.getCurrentTerm()) {
-                    broker.becomeFollower(hb.getTerm(), hb.getSenderId());
-                    broker.updateLeaderClientPort(hb.getLeaderClientPort());
-                }
-                break;
+                case HEARTBEAT:
+                    HeartbeatMessage hb = (HeartbeatMessage) message;
+                    broker.updateHeartbeat(hb.getSenderId());
+                    if (hb.isLeaderHeartbeat() && hb.getTerm() > broker.getCurrentTerm()) {
+                        broker.becomeFollower(hb.getTerm(), hb.getSenderId());
+                        broker.updateLeaderClientPort(hb.getLeaderClientPort());
+                    }
+                    break;
 
-            default:
-                broker.dispatchMessage(message);
+                default:
+                    broker.dispatchMessage(message);
+            }
+        } catch (ClassCastException e) {
+            System.err.println("[LeaderState] Malformed message received: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("[LeaderState] Unexpected error processing message: " + e.getMessage());
         }
     }
 
