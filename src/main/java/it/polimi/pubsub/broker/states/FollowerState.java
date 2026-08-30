@@ -40,13 +40,14 @@ public class FollowerState implements BrokerState {
 
                 //System.out.println(broker.getBrokerId() + " is " + broker.getRole() + " for " + broker.getCurrentLeaderId());
 
-                if (hb.getTerm() >= broker.getCurrentTerm()) {
-                    if (broker.getCurrentLeaderId().equals(hb.getSenderId()))
+                if (hb.isLeaderHeartbeat() && hb.getTerm() >= broker.getCurrentTerm()) {
+                    if (hb.getTerm() == broker.getCurrentTerm()
+                            && hb.getSenderId().equals(broker.getCurrentLeaderId()))
                         broker.updateLeaderHeartbeat();
-                    else if (broker.getCurrentTerm() != hb.getTerm() /* it will be an higher term */){
-                        // TODO UPDATE LEADER THAT HAS THIS HIGHER TERM
-                        broker.becomeFollower(hb.getTerm(), hb.getLeaderId());
+                    else {
+                        broker.becomeFollower(hb.getTerm(), hb.getSenderId());
                     }
+                    broker.updateLeaderClientPort(hb.getLeaderClientPort());
                 }
                 break;
 

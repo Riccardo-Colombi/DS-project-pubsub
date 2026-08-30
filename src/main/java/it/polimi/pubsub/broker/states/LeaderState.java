@@ -3,6 +3,7 @@ package it.polimi.pubsub.broker.states;
 import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.broker.components.BrokerRole;
 import it.polimi.pubsub.broker.BrokerState;
+import it.polimi.pubsub.messages.HeartbeatMessage;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.brokerMessages.AppendEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
@@ -42,6 +43,15 @@ public class LeaderState implements BrokerState {
 
             case APPEND_ENTRY:
                 broker.handleAppendEntry((AppendEntryMessage) message);
+                break;
+
+            case HEARTBEAT:
+                HeartbeatMessage hb = (HeartbeatMessage) message;
+                broker.updateHeartbeat(hb.getSenderId());
+                if (hb.isLeaderHeartbeat() && hb.getTerm() > broker.getCurrentTerm()) {
+                    broker.becomeFollower(hb.getTerm(), hb.getSenderId());
+                    broker.updateLeaderClientPort(hb.getLeaderClientPort());
+                }
                 break;
 
             default:

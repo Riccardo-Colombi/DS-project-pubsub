@@ -379,7 +379,10 @@ public class Broker {
     public void sendHeartbeat() {
         if (crashed) return;
 
-        HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(), raftEngine.getCurrentTerm(), getCurrentLeaderId());
+        boolean isLeader = raftEngine.getRole() == BrokerRole.LEADER;
+        HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(),
+                raftEngine.getCurrentTerm(), getCurrentLeaderId(), isLeader, isLeader ? CLIENT_PORT : -1);
+
         for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
             handler.send(hm);
             handler.updateHeartbeat();
@@ -884,6 +887,10 @@ public class Broker {
 
         joinCluster(peerHost, peerBrokerPort);
         System.out.println("[RESURRECT] " + BROKER_ID + " sent join request — waiting for cluster acceptance...");
+    }
+
+    public void updateLeaderClientPort(int port) {
+        raftEngine.setLeaderClientPort(port);
     }
 
     public String getCurrentLeaderId() {

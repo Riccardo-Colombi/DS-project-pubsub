@@ -640,6 +640,7 @@ public class Raft {
         state = new SoloState(broker);
     }
 
+    // Getters
     public String getCurrentLeaderId() {
         return currentLeaderId;
     }
@@ -647,8 +648,14 @@ public class Raft {
     public String getVotedFor() {
         return votedFor;
     }
+
     public String getClusterId() {
         return clusterId;
+    }
+
+    // Setters
+    public synchronized void setLeaderClientPort(int port) {
+        this.leaderClientPort = port;
     }
 
     // Clear memory
