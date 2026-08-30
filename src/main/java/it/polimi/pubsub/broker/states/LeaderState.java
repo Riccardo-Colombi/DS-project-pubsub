@@ -4,6 +4,7 @@ import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.broker.components.BrokerRole;
 import it.polimi.pubsub.broker.BrokerState;
 import it.polimi.pubsub.messages.Message;
+import it.polimi.pubsub.messages.brokerMessages.AppendEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
 import it.polimi.pubsub.messages.brokerMessages.RequestVoteMessage;
 
@@ -37,6 +38,10 @@ public class LeaderState implements BrokerState {
                     broker.becomeFollower(rv.getTerm(), null);
                     broker.handleRequestVote(rv);
                 }
+                break;
+
+            case APPEND_ENTRY:
+                broker.handleAppendEntry((AppendEntryMessage) message);
                 break;
 
             default:
