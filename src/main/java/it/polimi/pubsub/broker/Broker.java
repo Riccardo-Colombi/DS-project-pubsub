@@ -22,6 +22,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
+import static it.polimi.pubsub.broker.components.BrokerRole.*;
+
 // State machine for roles LEADER, FOLLOWER, CANDIDATE
 // Add random timout for leader election
 
@@ -363,6 +365,10 @@ public class Broker {
 
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(senderId);
 
+        if (connectionRegistry.isKnownClient(senderId) && raftEngine.getRole() != LEADER) {
+            redirectClientToLeader(senderId);
+        }
+
         if (handler != null) {
             handler.updateHeartbeat();
         }
@@ -379,7 +385,7 @@ public class Broker {
     public void sendHeartbeat() {
         if (crashed) return;
 
-        boolean isLeader = raftEngine.getRole() == BrokerRole.LEADER;
+        boolean isLeader = raftEngine.getRole() == LEADER;
         HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(),
                 raftEngine.getCurrentTerm(), getCurrentLeaderId(), isLeader, isLeader ? CLIENT_PORT : -1);
 
@@ -387,7 +393,7 @@ public class Broker {
             handler.send(hm);
             handler.updateHeartbeat();
 
-            if(raftEngine.getRole() == BrokerRole.LEADER) {
+            if(raftEngine.getRole() == LEADER) {
                 raftEngine.sendAppendEntriesToFollower(handler.getNodeId());
             }
         }
