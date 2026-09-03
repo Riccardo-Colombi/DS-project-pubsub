@@ -40,7 +40,7 @@ public class Client implements Publisher, Subscriber {
 
     private final AtomicBoolean wasRedirected = new AtomicBoolean(false);
 
-    private volatile boolean autoReconnect = false;
+    private volatile boolean autoReconnect = true;
 
     private final BlockingQueue<Message> outQueue = new LinkedBlockingQueue<>();
 

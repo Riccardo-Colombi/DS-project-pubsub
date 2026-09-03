@@ -149,10 +149,6 @@ public class Raft {
         if (candidateTerm > currentTerm) {
             currentTerm = candidateTerm;
             votedFor = null;
-            //state = new FollowerState(broker);
-            // TODO: Un candidato che chiede un voto non è (ancora) un leader. Passandolo come leaderId a becomeFollower,
-            //  questo assegna currentLeaderId a un nodo che magari non vincerà mai l'elezione
-            // becomeFollower(currentTerm, msg.getSenderId());
             becomeFollower(currentTerm, null);
         }
 
