@@ -13,6 +13,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -225,26 +226,33 @@ public class PubSubRouter {
 
         // Forward to local clients
         if (!interestedClients.isEmpty()) {
-            ackTracker.trackDelivery(msg, interestedClients); // todo maybe track delivery only when the handler != null (when the client it's not disconnected)
+            Set<String> onlineClients = new HashSet<>();
 
             for (String clientId : interestedClients) {
                 ClientHandler handler = connectionRegistry.getClientHandler(clientId);
 
                 if (handler != null) {
                     // Client is online: deliver directly
+                    onlineClients.add(clientId);
                     handler.send(msg);
                 } else if (topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
                     // Client is offline but durable: buffer for later delivery
-                    System.out.println("[OfflineStore] Buffering message "
-                            + msg.getMessageId() + " for offline client " + clientId);
+
+                    // TODO: output message
+                    // System.out.println("[PubSubRouter] Buffering message " + msg.getMessageId() + " for offline client " + clientId);
                     try {
                         offlineStore.enqueue(clientId, msg);
                     } catch (Exception e) {
-                        System.err.println("[OfflineStore] Failed to buffer message for "
+                        System.err.println("[PubSubRouter] Failed to buffer message for "
                                 + clientId + ": " + e.getMessage());
                     }
                 }
                 // Non-durable offline client: message is dropped (original behaviour)
+            }
+
+            // Track only online clients, because they are the only one that received the message.
+            if (!onlineClients.isEmpty()) {
+                ackTracker.trackDelivery(msg, onlineClients);
             }
         }
     }
@@ -291,16 +299,20 @@ public class PubSubRouter {
             List<PublishMessage> backlog = offlineStore.drain(clientId);
             if (backlog.isEmpty()) return;
 
-            System.out.println("[OfflineStore] Delivering " + backlog.size()
-                    + " buffered messages to " + clientId);
+            // TODO: output message
+            // System.out.println("[OfflineStore] Delivering " + backlog.size() + " buffered messages to " + clientId);
 
             ClientHandler handler = connectionRegistry.getClientHandler(clientId);
             if (handler == null) return;
 
-            for (PublishMessage msg : backlog)
+            // For each message set the tracking and then send
+            for (PublishMessage msg : backlog) {
+                ackTracker.trackDelivery(msg, Collections.singleton(clientId));
                 handler.send(msg);
+            }
 
-            ackTracker.resetTimestampsForSubscriber(clientId);
+            // Not needed anymore because tracking have been just created
+            // ackTracker.resetTimestampsForSubscriber(clientId);
 
         } catch (Exception e) {
             System.err.println("Error delivering offline messages to " + clientId + ": " + e.getMessage());

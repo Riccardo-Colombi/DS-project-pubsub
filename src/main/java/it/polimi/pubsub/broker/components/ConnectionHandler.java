@@ -45,9 +45,15 @@ public abstract class ConnectionHandler {
                 Message msg = connection.receive();
 
                 if (msg == null) {
-                    // client disconnected gracefully
+                    // Client disconnected gracefully
                     System.out.println("[Connection Handler] Client disconnected");
                     break;
+                }
+
+                // Needed it is the first time for a client connecting to a broker
+                if (nodeId == null) {
+                    nodeId = msg.getSenderId();
+                    registerNode(nodeId);
                 }
 
                 broker.onMessageReceived(msg);
