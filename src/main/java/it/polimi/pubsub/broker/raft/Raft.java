@@ -211,7 +211,12 @@ public class Raft {
     public synchronized void becomeLeader() {
         state = new LeaderState(broker);
         currentLeaderId = BROKER_ID;
-        this.leaderHost = "localhost";
+        try {
+            // Automatically resolves the actual LAN IP of this machine
+            this.leaderHost = java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            this.leaderHost = "127.0.0.1";
+        }
         this.leaderPort = BROKER_PORT;
         this.leaderClientPort = CLIENT_PORT;
 
@@ -221,7 +226,7 @@ public class Raft {
             followerMatchIndex.put(handler.getNodeId(), 0);
         }
 
-        System.out.println(BROKER_ID + " became LEADER for term " + currentTerm);
+        System.out.println(BROKER_ID + " became LEADER for term " + currentTerm + " on IP " + this.leaderHost);
         broker.sendHeartbeat();
     }
 
@@ -529,9 +534,15 @@ public class Raft {
         this.clusterId = java.util.UUID.randomUUID().toString();
         this.currentTerm = 1;
         this.currentLeaderId = BROKER_ID;
-        this.leaderHost = null;
-        this.leaderPort = -1;
-        this.leaderClientPort = -1;
+
+        try {
+            this.leaderHost = java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            this.leaderHost = "127.0.0.1";
+        }
+
+        this.leaderPort = BROKER_PORT;
+        this.leaderClientPort = CLIENT_PORT;
 
         this.state = new LeaderState(broker);
         System.out.println(BROKER_ID + " ha creato il cluster " + clusterId + " — term=" + currentTerm + ", ruolo=LEADER");
@@ -569,7 +580,7 @@ public class Raft {
         JoinClusterAckMessage joinAck = new JoinClusterAckMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
                 clusterId, currentTerm, peers,
-                "localhost",
+                this.leaderHost,
                 BROKER_PORT,
                 CLIENT_PORT
         );
