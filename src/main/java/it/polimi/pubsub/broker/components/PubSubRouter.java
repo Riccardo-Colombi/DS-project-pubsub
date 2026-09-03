@@ -208,7 +208,7 @@ public class PubSubRouter {
         Set<String> interestedClients = topicSubscribersTable.getInterestedClients(topic);
         Set<String> interestedBrokersNextHops = topicSubscribersTable.getNextHopOfInterestedBrokers(topic);
 
-        // Forward to peer brokers (unchanged)
+        // Forward to peer brokers
         if (!interestedBrokersNextHops.isEmpty()) {
             long brokerSeqNum = broker.getMessageCounter();
             long currentTime  = System.currentTimeMillis();

@@ -8,11 +8,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 
-/**
- * Come faccio a garantire at least once in caso di crash totale di un server? Devo comunque garantirla?
- *      Metodo per farlo?
- */
-
 // This is used to guarantee a "at-least-once delivery guarantee". When the broker forwards a PublishMessage to some subscribers it needs an
 // AckMessage from each one of them. As done before, map a message to a tracking object.
 public class AckTracker {

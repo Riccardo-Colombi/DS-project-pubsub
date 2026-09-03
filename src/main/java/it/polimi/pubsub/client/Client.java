@@ -90,6 +90,7 @@ public class Client implements Publisher, Subscriber {
         resubscribeDurableTopics();
 
         System.out.println(clientId + " connected to broker at " + currentHost + ":" + currentPort);
+        System.out.print("\nTopic (or 'exit'): ");
     }
 
     public void disconnect() {
