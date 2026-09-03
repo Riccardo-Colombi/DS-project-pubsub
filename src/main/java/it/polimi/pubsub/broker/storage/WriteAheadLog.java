@@ -43,20 +43,6 @@ public class WriteAheadLog {
         this.writer = new BufferedWriter(new FileWriter(logFile, true));
     }
 
-    // TODO: snapshot() chiama this.close() e poi riapre il writer. Nel frattempo, append() è synchronized ma su this —
-    //  il problema è che snapshot() è anch'esso synchronized, quindi sono mutuamente esclusivi. Tuttavia, tra close() e
-    //  la riapertura del writer, se un thread riesce a ottenere il lock (es. subito dopo che snapshot lo rilascia
-    //  temporaneamente) e il writer è null, si avrebbe un NullPointerException. Il fix è assicurarsi che writer non
-    //  sia mai null durante append
-
-    /*
-        Soluzione:
-
-        public synchronized void append(Message message) throws Exception {
-            if (writer == null) throw new IllegalStateException("WAL is closed");
-            // ...
-        }
-     */
     public synchronized void append(Message message) throws Exception {
         String jsonPayload = serializer.serialize(message);
         writer.write(jsonPayload);
@@ -65,9 +51,6 @@ public class WriteAheadLog {
         // to put it in permanent memory
         writer.flush();
     }
-
-    // TODO Modify this method for snapshot implementation
-    // Not necessary
 
     public List<Message> recover() throws Exception {
         List<Message> recoveredMessages = new ArrayList<>();
@@ -79,7 +62,6 @@ public class WriteAheadLog {
                 if(!trimmedLine.isEmpty()) {
                     try {
                         // If line is corrupted, e.g. crash while writing, serializer should throw an exception
-                        // TODO it really throws an exception???
                         Message msg = serializer.deserialize(trimmedLine);
                         recoveredMessages.add(msg);
                     } catch (Exception e) {
@@ -97,9 +79,6 @@ public class WriteAheadLog {
             writer.close();
         }
     }
-
-    // TODO Snapshot managing methods
-    // they are called by the broker when the conditions are met
 
     public synchronized void snapshot(List<Message> consolidatedState) throws Exception {
         File tempFile = new File(logFile.getAbsolutePath() + ".tmp");

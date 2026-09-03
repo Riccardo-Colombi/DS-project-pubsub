@@ -65,7 +65,6 @@ public class Broker {
     private final AtomicInteger messagesSinceLastCheck = new AtomicInteger(0);
     private static final int SIZE_CHECK_INTERVAL            = 50;
 
-    // TODO: check if an Atomic Counter is better
     private static final long SNAPSHOT_SIZE_THRESHOLD_BYTES = 5 * 1024 * 1024; // 5MB
 
     private final ReentrantReadWriteLock stateLock = new ReentrantReadWriteLock();
@@ -110,7 +109,7 @@ public class Broker {
             startHeartbeat();
             startHeartbeatChecker();
             startRetryScheduler();
-            startElectionTimeoutChecker(); //todo check if works
+            startElectionTimeoutChecker();
             executor.submit(this::runClientListener);
             executor.submit(this::runBrokerListener);
 
@@ -244,7 +243,23 @@ public class Broker {
                     ackTracker.handleAck(ack.getAcknowledgedMessageId(), ack.getSenderId());
                     break;
 
-                // TODO: BrokerPublishMessage and BrokerSubscribeMessage is not in here! Fix it.
+                case BROKER_SUBSCRIBE:
+                    BrokerSubscribeMessage bSub = (BrokerSubscribeMessage) msg;
+                    topicSubscribersTable.addBrokerSubscription(bSub.getTopic(), bSub.getInterestedBrokerId(), bSub.getSenderId());
+                    break;
+
+                case BROKER_UNSUBSCRIBE:
+                    BrokerUnsubscribeMessage bUnsub = (BrokerUnsubscribeMessage) msg;
+                    topicSubscribersTable.removeBrokerSubscription(bUnsub.getTopic(), bUnsub.getInterestedBrokerId());
+                    break;
+
+                case BROKER_PUBLISH:
+                    BrokerPublishMessage bPub = (BrokerPublishMessage) msg;
+                    Set<String> interestedClientsAtThatTime = topicSubscribersTable.getInterestedClients(bPub.getTopic());
+                    if (!interestedClientsAtThatTime.isEmpty()) {
+                        ackTracker.trackDelivery(bPub.getOriginalMessage(), interestedClientsAtThatTime);
+                    }
+                    break;
 
                 default:
                     // This is for HEARTBEAT
@@ -252,7 +267,7 @@ public class Broker {
             }
         }
 
-        System.out.println("State recovery complete.");
+        System.out.println("[Broker] State recovered!");
     }
 
     public void onMessageReceived(Message message) throws Exception {
@@ -270,7 +285,7 @@ public class Broker {
 
                 wal.append(message);
 
-                System.out.println("Message received - " + "Broker: " + BROKER_ID +
+                System.out.println("[Broker] Message received - " + "Broker: " + BROKER_ID +
                         ", message ID: " + message.getSequenceNumber() +
                         ", sender ID: " + message.getSenderId() +
                         ", message type: " + message.getType());
@@ -360,7 +375,7 @@ public class Broker {
 
     public void updateHeartbeat(String senderId) {
 
-        // TODO: error
+        // TODO: output message
         // System.out.println(this.BROKER_ID + " received heartbeat from " + senderId);
 
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(senderId);
@@ -563,15 +578,15 @@ public class Broker {
      * On reconnect: updates the handler and delivers any buffered offline messages.
      */
     public void addClientToRegistry(String clientId, ClientHandler handler) {
-        if (raftEngine.getRole() == BrokerRole.FOLLOWER) {
-            redirectClientToLeader(clientId);
-            return;
-        }
-
         stateLock.readLock().lock();
         try {
             boolean isReconnect = connectionRegistry.isKnownClient(clientId);
             connectionRegistry.registerClient(clientId, handler); // always replaces stale handler
+
+            if (raftEngine.getRole() == BrokerRole.FOLLOWER) {
+                redirectClientToLeader(clientId);
+                return;
+            }
 
             if (isReconnect) {
                 System.out.println("Client " + clientId + " reconnected. Delivering offline messages…");
@@ -620,10 +635,6 @@ public class Broker {
         connectionRegistry.registerBroker(brokerId, handler);
     }
 
-    // TODO: When a client is definitively disconnected, his subscriptions remains in TopicSubscribersTable
-    // TODO: Broker will track ACK from a client that never exists
-
-    // TODO: hint from Boglio: add inside disconnectClient an UnsubscribeMessage
     /**
      * Called by ClientHandler on TCP disconnection.
      * Marks the client offline (keeps the record for durable subscriptions)
@@ -635,8 +646,39 @@ public class Broker {
             // keep record, drop handler
             connectionRegistry.markClientOffline(clientId);
             pubSubRouter.onClientDisconnection(clientId);
-            // topicSubscribersTable.removeNonDurableSubscriptions(clientId); // clean non-durable subs
 
+            boolean hasDurable = false;
+            for (String topic : topicSubscribersTable.getTopics()) {
+                if (topicSubscribersTable.getInterestedClients(topic).contains(clientId) &&
+                        topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
+                    hasDurable = true;
+                    break;
+                }
+            }
+
+            if (!hasDurable) {
+                ackTracker.removeOfflineClientReferences(clientId);
+            }
+
+            if (raftEngine.getRole() == BrokerRole.LEADER) {
+                long currentTime = System.currentTimeMillis();
+
+                for (String topic : topicSubscribersTable.getTopics()) {
+                    if (topicSubscribersTable.getInterestedClients(topic).contains(clientId)) {
+
+                        if (!topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
+                            long seq = getMessageCounter();
+                            UnsubscribeMessage unsubMsg = new UnsubscribeMessage(clientId, seq, currentTime, topic);
+
+                            try {
+                                dispatchMessage(unsubMsg);
+                            } catch (Exception e) {
+                                System.err.println("Failed to clean up subscription: " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
         } finally {
             stateLock.readLock().unlock();
         }
@@ -646,14 +688,36 @@ public class Broker {
         return stateLock;
     }
 
-    /* TODO add updated topic subscriber table to snapshot and maybe
-        On reconnection → immediately re-announce local subscriptions to the new neighbor
-        Every 30s → re-announce local subscriptions to all neighbors
-        On crash cleanup → removeBrokersByNextHop, let the refresh rebuild the paths naturally
-     */
     public void onBrokerDisconnection(String brokerId) {
-        if (connectionRegistry.isBrokerConnected(brokerId))
-            connectionRegistry.disconnectBroker(brokerId);
+        getStateLock().readLock().lock();
+        try {
+            if (connectionRegistry.isBrokerConnected(brokerId)) {
+                connectionRegistry.disconnectBroker(brokerId);
+
+                // Remove all subscription from broker disconnected
+                for (String topic : topicSubscribersTable.getTopics()) {
+                    if (topicSubscribersTable.getInterestedBrokersInfo(topic).containsKey(brokerId)) {
+
+                        boolean removed = topicSubscribersTable.removeBrokerSubscription(topic, brokerId);
+
+                        // Forward the cancel of the subscription to other brokers if necessary
+                        if (removed && raftEngine.getRole() == BrokerRole.LEADER) {
+                            long seq = getMessageCounter();
+                            long currentTime = System.currentTimeMillis();
+                            BrokerUnsubscribeMessage bUnsub = new BrokerUnsubscribeMessage(
+                                    BROKER_ID, seq, currentTime, brokerId, topic);
+                            try {
+                                dispatchMessage(bUnsub);
+                            } catch (Exception e) {
+                                System.err.println("Failed to clean up broker subscription: " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            stateLock.readLock().unlock();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -765,7 +829,7 @@ public class Broker {
 
             messagesSinceLastCheck.set(0);
 
-            System.out.println(BROKER_ID + " successfully installed distributed snapshot and synced with Leader.");
+            System.out.println("[Broker] " + BROKER_ID + " successfully installed distributed snapshot and synced with Leader.");
         } finally {
             stateLock.writeLock().unlock();
         }

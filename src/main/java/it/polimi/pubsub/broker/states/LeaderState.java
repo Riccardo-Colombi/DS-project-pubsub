@@ -30,7 +30,11 @@ public class LeaderState implements BrokerState {
                     broker.handleJoinClusterRequest((JoinClusterMessage) message);
                     break;
 
-                case SUBSCRIBE, UNSUBSCRIBE, PUBLISH:
+                case SUBSCRIBE:
+                case UNSUBSCRIBE:
+                case PUBLISH:
+                case BROKER_SUBSCRIBE:
+                case BROKER_UNSUBSCRIBE:
                     broker.replicateToFollowers(message);
                     break;
 

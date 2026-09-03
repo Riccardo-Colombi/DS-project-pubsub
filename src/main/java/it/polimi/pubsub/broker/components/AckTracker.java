@@ -73,6 +73,22 @@ public class AckTracker {
         return unackedMessages.values();
     }
 
+    /**
+     * Remove a client disconnected correctly from all messages awaiting an ACK.
+     * If a message has no more subscribers waiting, it's removed from memory.
+     */
+    public void removeOfflineClientReferences(String clientId) {
+        for (java.util.Map.Entry<String, PendingMessage> entry : unackedMessages.entrySet()) {
+            PendingMessage pending = entry.getValue();
+
+            pending.acknowledge(clientId);
+
+            if (pending.isFullyAcknowledged()) {
+                unackedMessages.remove(entry.getKey());
+            }
+        }
+    }
+
     public void clear() {
         unackedMessages.clear();
     }

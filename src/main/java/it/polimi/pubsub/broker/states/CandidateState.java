@@ -52,7 +52,9 @@ public class CandidateState implements BrokerState {
                 break;
 
             default:
-                broker.dispatchMessage(message);
+                // TODO: check if this is all right
+                // broker.dispatchMessage(message);
+                break;
         }
     }
 

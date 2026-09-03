@@ -11,8 +11,6 @@ import it.polimi.pubsub.messages.brokerMessages.CommitEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
 import it.polimi.pubsub.messages.brokerMessages.RequestVoteMessage;
 
-import java.sql.SQLOutput;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class FollowerState implements BrokerState {
@@ -38,8 +36,6 @@ public class FollowerState implements BrokerState {
                 HeartbeatMessage hb = (HeartbeatMessage) message;
                 broker.updateHeartbeat(hb.getSenderId());
 
-                //System.out.println(broker.getBrokerId() + " is " + broker.getRole() + " for " + broker.getCurrentLeaderId());
-
                 if (hb.isLeaderHeartbeat() && hb.getTerm() >= broker.getCurrentTerm()) {
                     if (hb.getTerm() == broker.getCurrentTerm()
                             && hb.getSenderId().equals(broker.getCurrentLeaderId()))
@@ -60,16 +56,8 @@ public class FollowerState implements BrokerState {
                 broker.commitEntry(commitEntry.getLogIndex());
                 break;
 
-            // todo : PUBLISH SUBSCRIBE and UNSUBSCRIBE are for edge case coverage, need to understand if they are fully covered
-
             case PUBLISH:
-                broker.redirectClientToLeader(message.getSenderId());
-                break;
-
             case SUBSCRIBE:
-                broker.redirectClientToLeader(message.getSenderId());
-                break;
-
             case UNSUBSCRIBE:
                 broker.redirectClientToLeader(message.getSenderId());
                 break;
@@ -98,12 +86,9 @@ public class FollowerState implements BrokerState {
                 break;
 
             default:
-                // this default behavior is to ensure that clients that sends requests
-                // to a follower will be redirected to the leader
-
-                // todo ensure this is the default behavior and that every other possible case is covered
-
-                broker.dispatchMessage(message);
+                // TODO: check if this is right
+                // broker.dispatchMessage(message);
+                break;
         }
     }
 
@@ -114,7 +99,6 @@ public class FollowerState implements BrokerState {
 
     @Override
     public void onHeartbeatTick() {
-
     }
 
 }
