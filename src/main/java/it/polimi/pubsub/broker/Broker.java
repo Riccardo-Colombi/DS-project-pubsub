@@ -390,7 +390,8 @@ public class Broker {
 
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(senderId);
 
-        if (connectionRegistry.isKnownClient(senderId) && raftEngine.getRole() != LEADER) {
+        // Redirect only if the role is FOLLOWER. A SOLO broker should never redirect
+        if (connectionRegistry.isKnownClient(senderId) && raftEngine.getRole() == BrokerRole.FOLLOWER) {
             redirectClientToLeader(senderId);
         }
 

@@ -58,15 +58,22 @@ public class InteractiveLauncher {
         Broker broker = new Broker(id, brokerPort, clientPort, walPath, offlinePath);
         broker.run();
 
-        ConsoleAppender.asyncMessage("[Launcher] Broker started. Type 'create' to init cluster or 'join <IP> <PORT>'.");
+        ConsoleAppender.asyncMessage("Broker started. Commands: 'create', 'join <IP> <PORT>', or 'bridge <IP> <PORT>'");
 
         while (true) {
+            ConsoleAppender.printPrompt("Broker > ");
             String cmd = scanner.nextLine();
+            ConsoleAppender.clearPrompt();
+
             if ("create".equals(cmd)) {
                 broker.createCluster();
             } else if (cmd.startsWith("join")) {
                 String[] parts = cmd.split(" ");
                 broker.joinCluster(parts[1], Integer.parseInt(parts[2]));
+            } else if (cmd.startsWith("bridge")) {
+                String[] parts = cmd.split(" ");
+                broker.connectToPeer(parts[1], Integer.parseInt(parts[2]));
+                ConsoleAppender.asyncMessage(String.format("[Launcher] Bridge established with %s:%s", parts[1], parts[2]));
             }
         }
     }
@@ -85,7 +92,7 @@ public class InteractiveLauncher {
         Client client = setupClient(scanner, "Publisher");
 
         while (true) {
-            ConsoleAppender.printPrompt("[Launcher] Topic (or 'exit') > ");
+            ConsoleAppender.printPrompt("[Launcher - Publisher] Topic (or 'exit') > ");
             String topic = scanner.nextLine();
             ConsoleAppender.clearPrompt();
 
@@ -98,6 +105,7 @@ public class InteractiveLauncher {
             client.publish(topic, payload.getBytes());
             ConsoleAppender.asyncMessage("[Launcher - Publisher] Message sent to topic: " + topic);
         }
+
         client.disconnect();
     }
 
@@ -105,7 +113,7 @@ public class InteractiveLauncher {
         Client client = setupClient(scanner, "Subscriber");
 
         while (true) {
-            ConsoleAppender.printPrompt("Topic (or 'exit') > ");
+            ConsoleAppender.printPrompt("[Launcher - Subscriber] Topic (or 'exit') > ");
             String topic = scanner.nextLine();
             ConsoleAppender.clearPrompt();
 
@@ -114,14 +122,16 @@ public class InteractiveLauncher {
             client.subscribe(topic);
             ConsoleAppender.asyncMessage("[Launcher - Subscriber] Subscribed to topic: " + topic);
         }
+
+        client.disconnect();
     }
 
     private static Client setupClient(Scanner scanner, String type) throws Exception {
-        System.out.print(type + " ID: ");
+        System.out.print("[Launcher] " + type + " ID: ");
         String id = scanner.nextLine();
-        System.out.print("Broker IP: ");
+        System.out.print("[Launcher] Broker IP: ");
         String ip = scanner.nextLine();
-        System.out.print("Broker Client Port: ");
+        System.out.print("[Launcher] Broker Client Port: ");
         int port = scanner.nextInt();
         scanner.nextLine();
 
