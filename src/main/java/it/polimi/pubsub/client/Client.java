@@ -90,7 +90,6 @@ public class Client implements Publisher, Subscriber {
         resubscribeDurableTopics();
 
         System.out.println(clientId + " connected to broker at " + currentHost + ":" + currentPort);
-        System.out.print("\nTopic (or 'exit'): ");
     }
 
     public void disconnect() {
@@ -284,11 +283,9 @@ public class Client implements Publisher, Subscriber {
     }
 
     private void handleIncomingPublish(PublishMessage msg) throws Exception {
-        // TODO: remove after test
-        /* System.out.println("Message received! Client: " + clientId +
+        System.out.println("Message received! Client: " + clientId +
                 "Topic: " + msg.getTopic() +
                 " Payload: " + new String(msg.getPayload()));
-         */
 
         // send ack back to broker
         long seqNum = sequenceCounter.incrementAndGet();

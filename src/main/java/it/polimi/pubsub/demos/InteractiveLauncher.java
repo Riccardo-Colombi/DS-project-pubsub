@@ -2,13 +2,15 @@ package it.polimi.pubsub.demos;
 
 import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.client.Client;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
+import java.io.File;
 import java.util.Scanner;
 
 public class InteractiveLauncher {
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
-        System.out.println("Select node type:\n1 - Broker\n2 - Publisher\n3 - Subscriber");
+        System.out.println("[Launcher] Select node type:\n1 - Broker\n2 - Publisher\n3 - Subscriber");
         int choice = scanner.nextInt();
         scanner.nextLine();
 
@@ -21,23 +23,42 @@ public class InteractiveLauncher {
                 startSubscriber(scanner);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            System.err.println("[Launcher] Fatal error: " +  e.getMessage());
         }
     }
 
     private static void startBroker(Scanner scanner) throws Exception {
-        System.out.print("Broker ID: ");
+        System.out.print("[Launcher] Broker ID: ");
         String id = scanner.nextLine();
-        System.out.print("Broker Port: ");
+        System.out.print("[Launcher] Broker Port: ");
         int brokerPort = scanner.nextInt();
-        System.out.print("Client Port: ");
+        System.out.print("[Launcher] Client Port: ");
         int clientPort = scanner.nextInt();
         scanner.nextLine();
 
-        Broker broker = new Broker(id, brokerPort, clientPort, "data/" + id + "_wal.log", "data/" + id + "_offline");
+        String walPath = "data/" + id + "_wal.log";
+        String offlinePath = "data/" + id + "_offline";
+
+        System.out.print("[Launcher] Do you want to clean old data and start fresh? (y/n): ");
+        String clean = scanner.nextLine();
+
+        if ("y".equalsIgnoreCase(clean)) {
+            File walFile = new File(walPath);
+            if (walFile.exists()) {
+                walFile.delete();
+            }
+
+            File offlineDir = new File(offlinePath);
+            if (offlineDir.exists()) {
+                deleteDirectory(offlineDir);
+            }
+            System.out.println("[Launcher] Old data cleared successfully.");
+        }
+
+        Broker broker = new Broker(id, brokerPort, clientPort, walPath, offlinePath);
         broker.run();
 
-        System.out.println("Broker started. Type 'create' to init cluster or 'join <IP> <PORT>'.");
+        ConsoleAppender.asyncMessage("[Launcher] Broker started. Type 'create' to init cluster or 'join <IP> <PORT>'.");
 
         while (true) {
             String cmd = scanner.nextLine();
@@ -50,17 +71,32 @@ public class InteractiveLauncher {
         }
     }
 
+    private static void deleteDirectory(File directoryToBeDeleted) {
+        File[] allContents = directoryToBeDeleted.listFiles();
+        if (allContents != null) {
+            for (File file : allContents) {
+                deleteDirectory(file);
+            }
+        }
+        directoryToBeDeleted.delete();
+    }
+
     private static void startPublisher(Scanner scanner) throws Exception {
         Client client = setupClient(scanner, "Publisher");
 
         while (true) {
-            System.out.print("Topic (or 'exit'): ");
+            ConsoleAppender.printPrompt("[Launcher] Topic (or 'exit') > ");
             String topic = scanner.nextLine();
+            ConsoleAppender.clearPrompt();
+
             if ("exit".equals(topic)) break;
 
-            System.out.print("Payload: ");
+            ConsoleAppender.printPrompt("Payload > ");
             String payload = scanner.nextLine();
+            ConsoleAppender.clearPrompt();
+
             client.publish(topic, payload.getBytes());
+            ConsoleAppender.asyncMessage("[Launcher - Publisher] Message sent to topic: " + topic);
         }
         client.disconnect();
     }
@@ -69,11 +105,14 @@ public class InteractiveLauncher {
         Client client = setupClient(scanner, "Subscriber");
 
         while (true) {
-            System.out.print("Topic (or 'exit'): ");
+            ConsoleAppender.printPrompt("Topic (or 'exit') > ");
             String topic = scanner.nextLine();
+            ConsoleAppender.clearPrompt();
+
             if ("exit".equals(topic)) break;
 
             client.subscribe(topic);
+            ConsoleAppender.asyncMessage("[Launcher - Subscriber] Subscribed to topic: " + topic);
         }
     }
 
