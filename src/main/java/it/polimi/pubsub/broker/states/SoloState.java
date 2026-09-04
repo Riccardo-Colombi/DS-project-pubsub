@@ -5,6 +5,7 @@ import it.polimi.pubsub.broker.components.BrokerRole;
 import it.polimi.pubsub.broker.BrokerState;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.MessageType;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 public class SoloState implements BrokerState {
 
@@ -22,7 +23,7 @@ public class SoloState implements BrokerState {
     @Override
     public void onMessageReceived(Message message) throws Exception {
         if (message.getType() == MessageType.JOIN_CLUSTER) {
-            System.out.println("[SoloState] JoinClusterMessage ricevuto ma questo broker non è in un cluster. Messaggio scartato.");
+            ConsoleAppender.asyncMessage("[SoloState] [ERROR] JoinClusterMessage received but this broker is not in the cluster");
             return;
         }
 

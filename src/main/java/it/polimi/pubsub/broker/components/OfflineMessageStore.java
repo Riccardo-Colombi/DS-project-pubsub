@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import it.polimi.pubsub.messages.PublishMessage;
 import it.polimi.pubsub.network.MessageSerializer;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.io.File;
 import java.io.IOException;
@@ -104,11 +105,11 @@ public class OfflineMessageStore {
                 }
 
                 queues.put(clientId, queue);
-                System.out.println("[OfflineStore] Recovered " + queue.size()
-                        + " messages for client: " + clientId);
+                ConsoleAppender.asyncMessage(String.format("[OfflineStore] Recovered %d messages for client %s",
+                        queue.size(), clientId));
             } catch (IOException e) {
-                System.err.println("[OfflineStore] Corrupted file for client "
-                        + clientId + ", skipping: " + e.getMessage());
+                ConsoleAppender.asyncMessage(String.format("[OfflineStore] [Error] Corrupted file for client %s. Error: %s",
+                        clientId, e.getMessage()));
             }
         }
     }

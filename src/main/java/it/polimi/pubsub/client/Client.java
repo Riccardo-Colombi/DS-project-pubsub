@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import it.polimi.pubsub.messages.*;
 import it.polimi.pubsub.messages.brokerMessages.RedirectToLeaderMessage;
 import it.polimi.pubsub.network.TcpConnection;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.io.IOException;
 import java.net.Socket;
@@ -55,7 +56,6 @@ public class Client implements Publisher, Subscriber {
         this.currentPort   = brokerPort;
     }
 
-    // TODO: check if delete
     public void enableAutoReconnect(boolean enable) {
         this.autoReconnect = enable;
     }
@@ -89,7 +89,7 @@ public class Client implements Publisher, Subscriber {
         // routing and knows the client is back online.
         resubscribeDurableTopics();
 
-        System.out.println(clientId + " connected to broker at " + currentHost + ":" + currentPort);
+        ConsoleAppender.asyncMessage(String.format("[Client %s] Connected to broker at %s:%d", clientId, currentHost, currentPort));
     }
 
     public void disconnect() {
@@ -101,7 +101,7 @@ public class Client implements Publisher, Subscriber {
         try {
             connection.close();
         } catch (Exception e) {
-            System.out.println("Error closing connection: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Client %s] [ERROR] Socket close failed.", clientId));
         }
     }
 
@@ -115,7 +115,7 @@ public class Client implements Publisher, Subscriber {
                 Message msg = connection.receive();
 
                 if (msg == null) {
-                    System.out.println("Broker disconnected");
+                    ConsoleAppender.asyncMessage(String.format("[Client %s] Broker disconnected.", clientId));
                     break;
                 }
 
@@ -124,12 +124,12 @@ public class Client implements Publisher, Subscriber {
         }  catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }  catch (JsonProcessingException e) {
-            System.out.println("Deserialization error: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Client %s] [ERROR] Deserialization failed.", clientId));
         } catch (IOException e) {
             if (running.get())
-                System.out.println("Connection lost: " + e.getMessage());
+                ConsoleAppender.asyncMessage(String.format("[Client %s] [ERROR] Connection lost.", clientId));
         } catch (Exception e) {
-            System.out.println("Generic error: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Client %s] [ERROR] Unexpected read error.", clientId));
         } finally {
             handleLoopExit();
         }
@@ -144,7 +144,7 @@ public class Client implements Publisher, Subscriber {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            System.out.println("Write error: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Client %s] [ERROR] Message write failed.", clientId));
         } finally {
             handleLoopExit();
         }
@@ -184,8 +184,8 @@ public class Client implements Publisher, Subscriber {
                     connect();
                     return;
                 } catch (Exception e) {
-                    System.out.println(clientId + ": redirect target " + currentHost + ":" + currentPort
-                            + " unreachable (" + e.getMessage() + "), falling back to bootstrap");
+                    ConsoleAppender.asyncMessage(String.format("[Client %s] Redirect target unreachable, falling back to bootstrap.",
+                            clientId));
                     currentHost = bootstrapHost;
                     currentPort = bootstrapPort;
                 }
@@ -201,8 +201,8 @@ public class Client implements Publisher, Subscriber {
                     connect();
                     return;
                 } catch (Exception e) {
-                    System.out.println(clientId + ": reconnect attempt " + attempt + "/" + MAX_RECONNECT_ATTEMPTS
-                            + " to " + currentHost + ":" + currentPort + " failed: " + e.getMessage());
+                    ConsoleAppender.asyncMessage(String.format("[Client %s] Reconnect attempt %d/%d failed.",
+                            clientId, attempt, MAX_RECONNECT_ATTEMPTS));
 
                     if (attempt == 1 && !(bootstrapHost.equals(currentHost) && bootstrapPort == currentPort)) {
                         currentHost = bootstrapHost;
@@ -210,7 +210,8 @@ public class Client implements Publisher, Subscriber {
                     }
                 }
             }
-            System.out.println(clientId + ": gave up reconnecting after " + MAX_RECONNECT_ATTEMPTS + " attempts");
+            ConsoleAppender.asyncMessage(String.format("[Client %s] [ERROR] Gave up reconnecting after %d attempts.",
+                    clientId, MAX_RECONNECT_ATTEMPTS));
         }, clientId + "-reconnect");
         t.setDaemon(true);
         t.start();
@@ -252,7 +253,7 @@ public class Client implements Publisher, Subscriber {
 
     private void resubscribeDurableTopics() {
         for (String topic : durableTopics) {
-            System.out.println("Re-subscribing durable topic after reconnect: " + topic);
+            ConsoleAppender.asyncMessage(String.format("[Client %s] Re-subscribing to durable topic: %s", clientId, topic));
             sendSubscribeMessage(topic, true);
         }
     }
@@ -273,7 +274,7 @@ public class Client implements Publisher, Subscriber {
                 handleRedirectToLeader((RedirectToLeaderMessage) msg);
                 break;
             default:
-                System.out.println("Unexpected message type: " + msg.getType());
+                ConsoleAppender.asyncMessage(String.format("[Client %s] [ERROR] Unexpected message type: %s", clientId, msg.getType()));
         }
     }
 
@@ -283,9 +284,8 @@ public class Client implements Publisher, Subscriber {
     }
 
     private void handleIncomingPublish(PublishMessage msg) throws Exception {
-        System.out.println("Message received! Client: " + clientId +
-                "Topic: " + msg.getTopic() +
-                " Payload: " + new String(msg.getPayload()));
+        ConsoleAppender.asyncMessage(String.format("[Client %s] [Topic: %s] %s",
+                clientId, msg.getTopic(), new String(msg.getPayload())));
 
         // send ack back to broker
         long seqNum = sequenceCounter.incrementAndGet();
@@ -296,7 +296,8 @@ public class Client implements Publisher, Subscriber {
     private void handleRedirectToLeader(RedirectToLeaderMessage msg) {
         String newHost = msg.getLeaderHost();
         int    newPort = msg.getLeaderClientPort();
-        System.out.println(clientId + ": redirected to leader at " + newHost + ":" + newPort);
+
+        ConsoleAppender.asyncMessage(String.format("[Client %s] Redirected to leader at %s:%d", clientId, newHost, newPort));
 
         currentHost = newHost;
         currentPort = newPort;

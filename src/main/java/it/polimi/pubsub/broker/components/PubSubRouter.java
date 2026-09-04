@@ -11,6 +11,7 @@ import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -237,14 +238,13 @@ public class PubSubRouter {
                     handler.send(msg);
                 } else if (topicSubscribersTable.isDurableSubscriber(clientId, topic)) {
                     // Client is offline but durable: buffer for later delivery
-
-                    // TODO: output message
-                    // System.out.println("[PubSubRouter] Buffering message " + msg.getMessageId() + " for offline client " + clientId);
+                    ConsoleAppender.asyncMessage(String.format("[PubSubRouter] Buffering message %s for the offline client %s",
+                            msg.getMessageId(), clientId));
                     try {
                         offlineStore.enqueue(clientId, msg);
                     } catch (Exception e) {
-                        System.err.println("[PubSubRouter] Failed to buffer message for "
-                                + clientId + ": " + e.getMessage());
+                        ConsoleAppender.asyncMessage(String.format("[PubSubRouter] [Error] Failed to buffer message for %s. Error: %s",
+                                clientId, e.getMessage()));
                     }
                 }
                 // Non-durable offline client: message is dropped (original behaviour)
@@ -299,8 +299,8 @@ public class PubSubRouter {
             List<PublishMessage> backlog = offlineStore.drain(clientId);
             if (backlog.isEmpty()) return;
 
-            // TODO: output message
-            // System.out.println("[OfflineStore] Delivering " + backlog.size() + " buffered messages to " + clientId);
+            ConsoleAppender.asyncMessage(String.format("[OfflineStore] Delivering %d buffered messages to the offline client %s",
+                    backlog.size(), clientId));
 
             ClientHandler handler = connectionRegistry.getClientHandler(clientId);
             if (handler == null) return;
@@ -315,7 +315,8 @@ public class PubSubRouter {
             // ackTracker.resetTimestampsForSubscriber(clientId);
 
         } catch (Exception e) {
-            System.err.println("Error delivering offline messages to " + clientId + ": " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[OfflineStore] [Error] Error delivering offline messages to %s. Error: %s",
+                    clientId, e.getMessage()));
         }
     }
 

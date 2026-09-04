@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.network.TcpConnection;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.io.IOException;
 import java.util.concurrent.*;
@@ -46,7 +47,8 @@ public abstract class ConnectionHandler {
 
                 if (msg == null) {
                     // Client disconnected gracefully
-                    System.out.println("[Connection Handler] Client disconnected");
+                    ConsoleAppender.asyncMessage(String.format("[Connection] Node disconnected: %s",
+                            (nodeId != null ? nodeId : "unknown")));
                     break;
                 }
 
@@ -60,13 +62,15 @@ public abstract class ConnectionHandler {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("[Connection Handler] Thread interrupted: " + e.getMessage());
+            ConsoleAppender.asyncMessage("[Connection] Read thread interrupted.");
         }  catch (JsonProcessingException e) {
-            System.out.println("[Connection Handler] Deserialization error: " + e.getMessage());
+            ConsoleAppender.asyncMessage("[Connection] [ERROR] Deserialization failed.");
         } catch (IOException e) {
-            System.out.println("[Connection Handler] Connection lost: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Connection] [ERROR] Connection lost for node: %s",
+                    (nodeId != null ? nodeId : "unknown")));
         } catch (Exception e) {
-            System.out.println("[Connection Handler] Generic error: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Connection] [ERROR] Unexpected read error: %s",
+                    e.getMessage()));
         } finally {
             if (disconnected.compareAndSet(false, true))
                 shutdown();
@@ -81,9 +85,9 @@ public abstract class ConnectionHandler {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("[Connection Handler] Write loop stopped (shutdown).");
+            // Silent catch: thread interruption during shutdown is physiological
         } catch (Exception e) {
-            System.out.println("[Connection Handler] Serialization error: " + e.getMessage());
+            ConsoleAppender.asyncMessage("[Connection] [ERROR] Message serialization failed.");
         } finally {
             if (disconnected.compareAndSet(false, true))
                 shutdown();
@@ -100,7 +104,7 @@ public abstract class ConnectionHandler {
             outQueue.put(msg);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.out.println("[Connection Handler] Interrupted while queuing message: " + e.getMessage());
+            ConsoleAppender.asyncMessage("[Connection] [ERROR] Queuing interrupted.");
         }
     }
 
@@ -123,7 +127,7 @@ public abstract class ConnectionHandler {
         try {
             connection.close();
         } catch (IOException e) {
-            System.out.println("Error closing connection: " + e.getMessage());
+            ConsoleAppender.asyncMessage("[Connection] [ERROR] Socket close failed.");
         }
 
         if (readerTask != null)

@@ -8,6 +8,7 @@ import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.brokerMessages.AppendEntryMessage;
 import it.polimi.pubsub.messages.brokerMessages.JoinClusterMessage;
 import it.polimi.pubsub.messages.brokerMessages.RequestVoteMessage;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 public class LeaderState implements BrokerState {
 
@@ -63,9 +64,9 @@ public class LeaderState implements BrokerState {
                     broker.dispatchMessage(message);
             }
         } catch (ClassCastException e) {
-            System.err.println("[LeaderState] Malformed message received: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[LeaderState] [ERROR] Malformed message received: %s", e.getMessage()));
         } catch (Exception e) {
-            System.err.println("[LeaderState] Unexpected error processing message: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[LeaderState] [ERROR] Unexpected error processing message: %s", e.getMessage()));
         }
     }
 

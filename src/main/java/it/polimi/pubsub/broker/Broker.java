@@ -9,6 +9,7 @@ import it.polimi.pubsub.messages.*;
 import it.polimi.pubsub.messages.brokerMessages.*;
 import it.polimi.pubsub.network.TcpConnection;
 import it.polimi.pubsub.broker.states.*;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -115,14 +116,15 @@ public class Broker {
 
             attemptClusterRejoin();
         } catch (Exception e) {
-            System.err.println("Fatal error: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Broker] [ERROR] Run error: %s", e.getMessage()));
         }
     }
 
     private void runClientListener() {
         try (ServerSocket ss = new ServerSocket(CLIENT_PORT)) {
             this.clientServerSocket = ss;
-            System.out.println("Listening for clients on " + CLIENT_PORT);
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] Listening for clients on port %d",
+                    BROKER_ID, CLIENT_PORT));
 
             while (!crashed) {
                 Socket socket = ss.accept();
@@ -132,14 +134,16 @@ public class Broker {
                 handler.start();
             }
         } catch (Exception e) {
-            System.err.println("TcpServer error: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] TcpServer error: %s",
+                    BROKER_ID, e.getMessage()));
         }
     }
 
     private void runBrokerListener() {
         try (ServerSocket ss = new ServerSocket(BROKER_PORT)) {
             this.brokerServerSocket = ss;
-            System.out.println("Listening for brokers on " + BROKER_PORT);
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] Listening for brokers on port %d",
+                    BROKER_ID, BROKER_PORT));
 
             while (!crashed) {
                 Socket socket = ss.accept();
@@ -155,14 +159,17 @@ public class Broker {
                     handler.start();
                     pubSubRouter.shareTopicSubscribers(handler);
 
-                    System.out.println(BROKER_ID + " connected to " + handler.getNodeId());
+                    ConsoleAppender.asyncMessage(String.format("[Broker %s] Connected to %s",
+                            BROKER_ID, handler.getNodeId()));
                 } catch (Exception e) {
-                    System.err.println("Handshake failed, rejecting connection: " + e.getMessage());
+                    ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Handshake failed, rejecting connection: %s",
+                            BROKER_ID, e.getMessage()));
                     conn.close(); // don't let a bad peer into the system
                 }
             }
         } catch (Exception e) {
-            System.err.println("TcpServer error: " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] TcpServer error: %s",
+                    BROKER_ID, e.getMessage()));
         }
     }
 
@@ -172,16 +179,17 @@ public class Broker {
         executor.submit(() -> {
             for (BrokerAddress peer : restoredPeers) {
                 try {
-                    System.out.println(BROKER_ID + ": trying to re-enter in the cluster through the help of: " + peer.getBrokerId());
+                    ConsoleAppender.asyncMessage(String.format("[Broker %s] Trying to re-enter in the cluster with the help of peer %s",
+                            BROKER_ID, peer.getBrokerId()));
                     joinCluster(peer.getHost(), peer.getBrokerPort());
                     return; // Sent request without exception of connection. Not "I'm in the cluster."
                 } catch (Exception e) {
-                    System.err.println(BROKER_ID + ": peer " + peer.getBrokerId()
-                            + " not reachable (" + e.getMessage() + "), trying the next one.");
+                    ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Peer %s not reachable (%s), trying the next one.",
+                            BROKER_ID, peer.getBrokerId(), e.getMessage()));
                 }
             }
-            System.err.println(BROKER_ID + ": no known peer reachable. "
-                    + "Broker alone till external join.");
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] No known peer reachable. Broker alone 'till external join",
+                    BROKER_ID));
         });
     }
 
@@ -198,13 +206,12 @@ public class Broker {
         handler.start();
         pubSubRouter.shareTopicSubscribers(handler);
 
-        System.out.println(BROKER_ID + " connected to " + handler.getNodeId());
+        ConsoleAppender.asyncMessage(String.format("[Broker %s] Connected to peer: %s", BROKER_ID, handler.getNodeId()));
         return handler;
     }
 
     private void recoverState() throws Exception {
         List<Message> messages = wal.recover();
-        System.out.println("Recovering state from WAL: " + messages.size() + " entries.");
 
         for (Message msg : messages) {
             switch (msg.getType()) {
@@ -267,11 +274,11 @@ public class Broker {
             }
         }
 
-        System.out.println("[Broker] State recovered!");
+        ConsoleAppender.asyncMessage(String.format("[Broker %s] State recovered from WAL (%d entries).",
+                BROKER_ID, messages.size()));
     }
 
     public void onMessageReceived(Message message) throws Exception {
-
         if (crashed) return;
 
         stateLock.writeLock().lock();
@@ -285,10 +292,12 @@ public class Broker {
 
                 wal.append(message);
 
-                System.out.println("[Broker] Message received - " + "Broker: " + BROKER_ID +
-                        ", message ID: " + message.getSequenceNumber() +
-                        ", sender ID: " + message.getSenderId() +
-                        ", message type: " + message.getType());
+                // TODO: check if it is a right assumption
+                // Filtering the ACK out because they are not that relevant
+                if (message.getType() != MessageType.ACK) {
+                    ConsoleAppender.asyncMessage(String.format("[Broker %s] Received %s (msgId: %s)",
+                            BROKER_ID, message.getType(), message.getSequenceNumber()));
+                }
             }
 
             raftEngine.getState().onMessageReceived(message);
@@ -362,7 +371,8 @@ public class Broker {
                 break;
 
             default:
-                System.err.println("Unknown message type received.");
+                ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Unknown message type received.",
+                        BROKER_ID));
         }
     }
 
@@ -435,7 +445,7 @@ public class Broker {
     private void checkHeartbeats() {
         for (ConnectionHandler handler : connectionRegistry.getConnectedHandlers()) {
             if (handler.isTimedOut(HEARTBEAT_TIMEOUT_MS)) {
-                System.out.println("Node " + handler.getNodeId() + " timed out, disconnecting.");
+                ConsoleAppender.asyncMessage(String.format("[Broker %s] Node %s timed out, disconnecting.", BROKER_ID, handler.getNodeId()));
                 handler.forceDisconnect();
             }
         }
@@ -555,7 +565,7 @@ public class Broker {
 
     public void redirectClientToLeader(String clientId) {
         if (raftEngine.getLeaderHost() == null || raftEngine.getLeaderClientPort() <= 0) {
-            System.err.println(BROKER_ID + ": cannot redirect client " + clientId + " — leader address unknown");
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Cannot redirect client %s — leader address unknown", BROKER_ID, clientId));
             return;
         }
 
@@ -568,8 +578,8 @@ public class Broker {
 
         if (handler != null) {
             handler.send(redirect);
-            System.out.println(BROKER_ID + " redirecting client " + clientId
-                    + " to leader at " + raftEngine.getLeaderHost() + ":" + raftEngine.getLeaderClientPort());
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirecting client %s to leader at %s:%d",
+                    BROKER_ID, clientId, raftEngine.getLeaderHost(), raftEngine.getLeaderClientPort()));
         }
     }
 
@@ -589,10 +599,10 @@ public class Broker {
             }
 
             if (isReconnect) {
-                System.out.println("Client " + clientId + " reconnected. Delivering offline messages…");
+                ConsoleAppender.asyncMessage(String.format("[Broker %s] Client %s reconnected. Delivering offline messages...", BROKER_ID, clientId));
                 pubSubRouter.deliverOfflineMessages(clientId);
             } else {
-                System.out.println("Client " + clientId + " connected for the first time.");
+                ConsoleAppender.asyncMessage(String.format("[Broker %s] Client %s connected (new session).", BROKER_ID, clientId));
             }
         } finally {
             stateLock.readLock().unlock();
@@ -614,8 +624,8 @@ public class Broker {
             List<PublishMessage> backlog = offlineStore.drain(clientId);
             if (backlog.isEmpty()) return;
 
-            System.out.println("[OfflineStore] Delivering " + backlog.size()
-                    + " buffered messages to " + clientId);
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] [OfflineStore] Delivering %d buffered messages to %s",
+                    BROKER_ID, backlog.size(), clientId));
 
             ClientHandler handler = connectionRegistry.getClientHandler(clientId);
             if (handler == null) return; // client disconnected again immediately
@@ -627,7 +637,8 @@ public class Broker {
             ackTracker.resetTimestampsForSubscriber(clientId);
 
         } catch (Exception e) {
-            System.err.println("Error delivering offline messages to " + clientId + ": " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Error delivering offline messages to %s: %s",
+                    BROKER_ID, clientId, e.getMessage()));
         }
     }
 
@@ -673,7 +684,8 @@ public class Broker {
                             try {
                                 dispatchMessage(unsubMsg);
                             } catch (Exception e) {
-                                System.err.println("Failed to clean up subscription: " + e.getMessage());
+                                ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Failed to clean up subscription for %s: %s",
+                                        BROKER_ID, clientId, e.getMessage()));
                             }
                         }
                     }
@@ -709,7 +721,8 @@ public class Broker {
                             try {
                                 dispatchMessage(bUnsub);
                             } catch (Exception e) {
-                                System.err.println("Failed to clean up broker subscription: " + e.getMessage());
+                                ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Failed to clean up broker subscription for %s: %s",
+                                        BROKER_ID, brokerId, e.getMessage()));
                             }
                         }
                     }
@@ -829,7 +842,8 @@ public class Broker {
 
             messagesSinceLastCheck.set(0);
 
-            System.out.println("[Broker] " + BROKER_ID + " successfully installed distributed snapshot and synced with Leader.");
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] Successfully installed distributed snapshot and synced with Leader.",
+                    BROKER_ID));
         } finally {
             stateLock.writeLock().unlock();
         }
@@ -845,7 +859,8 @@ public class Broker {
 
     public void joinCluster(String host, int port) throws Exception {
         if (raftEngine.getRole() != BrokerRole.SOLO) {
-            System.err.println("joinCluster() chiamato su un broker che non è SOLO (ruolo attuale: " + raftEngine.getRole() + ")");
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] joinCluster() called on a broker that is not SOLO (current role: %s)",
+                    BROKER_ID, raftEngine.getRole()));
             return;
         }
 
@@ -854,8 +869,6 @@ public class Broker {
         long seq = getMessageCounter();
         JoinClusterMessage joinMsg = new JoinClusterMessage(BROKER_ID, seq, System.currentTimeMillis());
         handler.send(joinMsg);
-
-        //System.out.println(BROKER_ID + " ha inviato JoinClusterMessage a " + host + ":" + port);
     }
 
     public void handleJoinClusterRequest(JoinClusterMessage msg) {
@@ -863,7 +876,8 @@ public class Broker {
     }
 
     private void handleRedirectToLeader(RedirectToLeaderMessage msg) throws Exception {
-        System.out.println(BROKER_ID + " rediretto al leader " + msg.getLeaderHost() + ":" + msg.getLeaderPort());
+        ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirected to leader at %s:%d",
+                BROKER_ID, msg.getLeaderHost(), msg.getLeaderPort()));
         joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
     }
 
@@ -909,14 +923,13 @@ public class Broker {
 
     public synchronized void crash() {
         if (crashed) {
-            System.out.println("[" + BROKER_ID + "] already crashed — ignoring duplicate crash()");
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] Already crashed — ignoring duplicate crash().",
+                    BROKER_ID));
             return;
         }
 
-        System.out.println("\n╔══════════════════════════════════════════╗");
-        System.out.println(  "║  CRASH: " + BROKER_ID
-                + " (term=" + raftEngine.getCurrentTerm() + ", role=" + raftEngine.getRole() + ")");
-        System.out.println(  "╚══════════════════════════════════════════╝\n");
+        ConsoleAppender.asyncMessage(String.format("[Broker %s] CRASH simulated. Node is now offline (term=%d, role=%s).",
+                BROKER_ID, raftEngine.getCurrentTerm(), raftEngine.getRole()));
 
         crashed = true;
         raftEngine.setState(new SoloState(this));
@@ -934,19 +947,15 @@ public class Broker {
         catch (IOException e) {
 
         }
-
-        System.out.println("[CRASH] " + BROKER_ID + " is now offline. " + "Remaining brokers will detect the absence and elect a new leader.");
     }
 
     public void resurrect(String peerHost, int peerBrokerPort) throws Exception {
         if (!crashed) {
-            System.out.println("[" + BROKER_ID + "] not crashed — ignoring resurrect()");
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] Not crashed — ignoring resurrect().", BROKER_ID));
             return;
         }
 
-        System.out.println("\n╔══════════════════════════════════════════╗");
-        System.out.println(  "║  RESURRECT: " + BROKER_ID + " coming back online...");
-        System.out.println(  "╚══════════════════════════════════════════╝\n");
+        ConsoleAppender.asyncMessage(String.format("[Broker %s] RESURRECTING. Coming back online...", BROKER_ID));
 
         crashed = false;
         raftEngine.reset();
@@ -956,7 +965,8 @@ public class Broker {
         Thread.sleep(500);
 
         joinCluster(peerHost, peerBrokerPort);
-        System.out.println("[RESURRECT] " + BROKER_ID + " sent join request — waiting for cluster acceptance...");
+        ConsoleAppender.asyncMessage(String.format("[Broker %s] Sent join request — waiting for cluster acceptance...",
+                BROKER_ID));
     }
 
     public void updateLeaderClientPort(int port) {

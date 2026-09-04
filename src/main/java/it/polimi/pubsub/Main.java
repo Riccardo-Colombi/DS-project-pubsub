@@ -6,7 +6,7 @@ import java.util.concurrent.CountDownLatch;
 public class Main {
     public static void main(String[] args) throws Exception {
         if (args.length < 5) {
-            System.err.println("Usage: java -cp app.jar it.polimi.pubsub.Main <brokerId> <brokerPort> <clientPort> <walPath> <offlinePath>");
+            System.err.println("[Main] Usage: java -cp app.jar it.polimi.pubsub.Main <brokerId> <brokerPort> <clientPort> <walPath> <offlinePath>");
             System.exit(1);
         }
 
@@ -16,7 +16,7 @@ public class Main {
         String walPath = args[3];
         String offlinePath = args[4];
 
-        System.out.println("Starting " + brokerId + "...");
+        System.out.println("[Main] Starting " + brokerId + "...");
         Broker broker = new Broker(brokerId, brokerPort, clientPort, walPath, offlinePath);
         broker.run();
 
@@ -25,13 +25,13 @@ public class Main {
             if ("create".equals(action)) {
                 Thread.sleep(2000);
                 broker.createCluster();
-                System.out.println(brokerId + " created the cluster.");
+                System.out.println("[Main] " + brokerId + " created the cluster.");
             } else if ("join".equals(action) && args.length >= 8) {
                 Thread.sleep(4000);
                 String targetHost = args[6];
                 int targetPort = Integer.parseInt(args[7]);
                 broker.joinCluster(targetHost, targetPort);
-                System.out.println(brokerId + " joined cluster at " + targetHost + ":" + targetPort);
+                System.out.println("[Main] " + brokerId + " joined cluster at " + targetHost + ":" + targetPort);
             }
         }
 

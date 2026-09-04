@@ -15,6 +15,7 @@ import it.polimi.pubsub.broker.storage.LogEntry;
 import it.polimi.pubsub.broker.storage.RaftMetadata;
 import it.polimi.pubsub.messages.Message;
 import it.polimi.pubsub.messages.brokerMessages.*;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -133,7 +134,8 @@ public class Raft {
         lastLeaderHeartbeatMs = System.currentTimeMillis();
         state = new CandidateState(broker);
 
-        System.out.println(BROKER_ID + " starting election for term " + currentTerm);
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Starting election for term %d",
+                BROKER_ID, currentTerm));
 
         long seq = broker.getMessageCounter();
         RequestVoteMessage rv = new RequestVoteMessage(BROKER_ID, seq, System.currentTimeMillis(), currentTerm, getLastLogIndex(), getLastLogTerm());
@@ -166,7 +168,8 @@ public class Raft {
         }
 
         sendRequestVoteAck(msg.getSenderId(), voteGranted);
-        System.out.println(BROKER_ID + " vote for " + msg.getSenderId() + " (term " + candidateTerm + "): " + voteGranted);
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Vote for %s (term %d): %b",
+                BROKER_ID, msg.getSenderId(), candidateTerm, voteGranted));
     }
 
     private boolean isCandidateLogUpToDate(int candidateLastTerm, int candidateLastIndex) {
@@ -222,7 +225,8 @@ public class Raft {
             followerMatchIndex.put(handler.getNodeId(), 0);
         }
 
-        System.out.println(BROKER_ID + " became LEADER for term " + currentTerm + " on IP " + this.leaderHost);
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Became LEADER for term %d",
+                BROKER_ID, currentTerm));
         broker.sendHeartbeat();
     }
 
@@ -242,7 +246,9 @@ public class Raft {
         electionVotes = 0;
         state = new FollowerState(broker);
         lastLeaderHeartbeatMs = System.currentTimeMillis();
-        System.out.println(BROKER_ID + " became FOLLOWER for term " + currentTerm + " for leader: " + leaderId );
+
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Became FOLLOWER for term %d (Leader: %s)",
+                BROKER_ID, currentTerm, leaderId));
     }
 
     public synchronized void replicateToFollowers(Message msg) throws Exception {
@@ -275,7 +281,7 @@ public class Raft {
             try {
                 sendInstallSnapshotToFollower(followerId);
             } catch (Exception e) {
-                System.err.println("Failed to send InstallSnapshot to " + followerId + ": " + e.getMessage());
+                ConsoleAppender.asyncMessage(String.format("[Raft %s] [ERROR] Failed to send InstallSnapshot to %s: %s", BROKER_ID, followerId, e.getMessage()));
             }
             return;
         }
@@ -439,9 +445,11 @@ public class Raft {
             // it took the FOLLOWER millisecond to send the ACK back. This fix the bug
             followerNextIndex.put(followerId, commitIndex + 1);
 
-            System.out.println(BROKER_ID + " is sending an InstallSnapshot to lagging follower " + followerId);
+            ConsoleAppender.asyncMessage(String.format("[Raft %s] Sending InstallSnapshot to lagging follower %s",
+                    BROKER_ID, followerId));
         } catch (Exception e) {
-            System.err.println("Failed to send InstallSnapshot to " + followerId + ": " + e.getMessage());
+            ConsoleAppender.asyncMessage(String.format("[Raft %s] [ERROR] Failed to send InstallSnapshot to %s: %s",
+                    BROKER_ID, followerId, e.getMessage()));
         }
 
     }
@@ -523,7 +531,8 @@ public class Raft {
 
     public void createCluster() {
         if (state.getRole() != BrokerRole.SOLO) {
-            System.err.println("createCluster() chiamato su un broker che non è SOLO (ruolo attuale: " + state.getRole() + ")");
+            ConsoleAppender.asyncMessage(String.format("[Raft %s] [ERROR] createCluster() called on a node that is not SOLO (current role: %s)",
+                    BROKER_ID, state.getRole()));
             return;
         }
 
@@ -541,7 +550,8 @@ public class Raft {
         this.leaderClientPort = CLIENT_PORT;
 
         this.state = new LeaderState(broker);
-        System.out.println(BROKER_ID + " ha creato il cluster " + clusterId + " — term=" + currentTerm + ", ruolo=LEADER");
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Cluster created (term=%d, role=LEADER)",
+                BROKER_ID, currentTerm));
     }
 
     public void handleJoinClusterRequest(JoinClusterMessage msg) {
@@ -569,9 +579,6 @@ public class Raft {
                 .map(h -> new BrokerAddress(h.getNodeId(), h.getRemoteHost(), h.getRemoteBrokerPort()))
                 .collect(java.util.stream.Collectors.toList());
 
-        peers.forEach(p -> System.out.println("Peer in ack: " + p.getBrokerId()
-                + " -> " + p.getHost() + ":" + p.getBrokerPort()));
-
         long seq = broker.getMessageCounter();
         JoinClusterAckMessage joinAck = new JoinClusterAckMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
@@ -582,7 +589,7 @@ public class Raft {
         );
         connectionRegistry.getConnectionHandler(requesterId).send(joinAck);
 
-        System.out.println(BROKER_ID + " ha accettato " + requesterId + " nel cluster " + clusterId);
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Accepted %s into the cluster", BROKER_ID, requesterId));
     }
 
     public void handleJoinClusterAck(JoinClusterAckMessage msg) {
@@ -609,15 +616,15 @@ public class Raft {
                         BrokerHandler h = broker.connectToPeer(peer.getHost(), peer.getBrokerPort());
                         h.markAsClusterMember();
                     } catch (Exception e) {
-                        System.err.println("Impossibile connettersi al peer "
-                                + peer.getBrokerId() + ": " + e.getMessage());
+                        ConsoleAppender.asyncMessage(String.format("[Raft %s] [ERROR] Failed to connect to peer %s: %s",
+                                BROKER_ID, peer.getBrokerId(), e.getMessage()));
                     }
                 }
             }
         });
 
-        System.out.println(BROKER_ID + " joined cluster " + clusterId
-                + " — term=" + currentTerm + ", leader=" + currentLeaderId + ", role=FOLLOWER");
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Joined cluster (term=%d, leader=%s)",
+                BROKER_ID, currentTerm, currentLeaderId));
     }
 
     public synchronized void restoreState(RaftMetadata metadata) {
@@ -629,10 +636,8 @@ public class Raft {
         this.lastApplied  = metadata.getLastApplied();
         this.clusterId    = metadata.getClusterId();
 
-        System.out.println(BROKER_ID + " restored Raft's state from snapshot: "
-                + "term=" + currentTerm + ", votedFor=" + votedFor
-                + ", commitIndex=" + commitIndex + ", lastApplied=" + lastApplied
-                + ", clusterId=" + clusterId );
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] State restored from snapshot (term=%d, commitIndex=%d)",
+                BROKER_ID, currentTerm, commitIndex));
     }
 
     public void reset() {
@@ -674,7 +679,7 @@ public class Raft {
             }
         }
 
-        System.out.println(BROKER_ID + " Log payloads in RAM cleared up to index " + commitIndex);
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] RAM log compacted up to index %d",
+                BROKER_ID, commitIndex));
     }
-
 }

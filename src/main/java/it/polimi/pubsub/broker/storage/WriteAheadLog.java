@@ -10,6 +10,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import it.polimi.pubsub.utils.ConsoleAppender;
 
 // I decided to create a WAL file to save the state of a broker and append messages everytime instead of modifying it
 // every time there's a "new thing" or there is a "deletion operation".
@@ -66,7 +67,7 @@ public class WriteAheadLog {
                         recoveredMessages.add(msg);
                     } catch (Exception e) {
                         // Do nothing, it means the message was not acknowledged and it will be resent
-                        System.err.println("Corrupted line ... skipping : " + trimmedLine);
+                        ConsoleAppender.asyncMessage("[WAL] [ERROR] Corrupted log line skipped.");
                     }
                 }
             }
@@ -137,7 +138,7 @@ public class WriteAheadLog {
         try {
             return metadataMapper.readValue(metadataFile, RaftMetadata.class);
         } catch (IOException e) {
-            System.err.println("[WAL] Metadata Raft corrupt or missing, ignored: " + e.getMessage());
+            ConsoleAppender.asyncMessage("[WAL] [ERROR] Raft metadata corrupt or missing, ignored.");
             return null;
         }
     }
