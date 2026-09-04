@@ -8,18 +8,34 @@ import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.io.IOException;
 import java.net.Socket;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class Client implements Publisher, Subscriber {
+
+    public static class Address {
+        private final String host;
+        private final int    port;
+
+        public Address(String host, int port) {
+            this.host = host;
+            this.port = port;
+        }
+
+        public String getHost() { return host; }
+        public int    getPort() { return port; }
+    }
 
     private static final long HEARTBEAT_INTERVAL_MS   = 3000;
     private static final long ACK_TIMEOUT_MS          = 5000;
     private static final long RETRY_INTERVAL_MS       = 2000;
     private static final int  MAX_RECONNECT_ATTEMPTS  = 10;
+    private static final int SAME_BROKER_RETRY_ATTEMPTS = 3;
 
     private final String clientId;
 
@@ -28,6 +44,9 @@ public class Client implements Publisher, Subscriber {
 
     private volatile String currentHost;
     private volatile int    currentPort;
+
+    private final List<Address> brokerAddresses;
+    private final AtomicInteger currentBrokerIndex = new AtomicInteger(0);
 
     private final Set<String> durableTopics = ConcurrentHashMap.newKeySet();
 
@@ -54,6 +73,23 @@ public class Client implements Publisher, Subscriber {
         this.bootstrapPort = brokerPort;
         this.currentHost   = brokerHost;
         this.currentPort   = brokerPort;
+        brokerAddresses = null;
+    }
+
+    public Client(String clientId, List<Address> brokerAddresses) {
+        if (brokerAddresses == null || brokerAddresses.isEmpty()) {
+            throw new IllegalArgumentException("brokerAddresses must contain at least one entry");
+        }
+
+        Address first = brokerAddresses.getFirst();
+
+        this.clientId      = clientId;
+        this.bootstrapHost = first.getHost();
+        this.bootstrapPort = first.getPort();
+        this.currentHost   = first.getHost();
+        this.currentPort   = first.getPort();
+
+        this.brokerAddresses = brokerAddresses;
     }
 
     public void enableAutoReconnect(boolean enable) {
@@ -186,11 +222,18 @@ public class Client implements Publisher, Subscriber {
                 } catch (Exception e) {
                     ConsoleAppender.asyncMessage(String.format("[Client %s] Redirect target unreachable, falling back to bootstrap.",
                             clientId));
-                    currentHost = bootstrapHost;
-                    currentPort = bootstrapPort;
+
+                    // TODO check if we can use this also with the list of brokers
+                    //if (brokerAddresses == null) {
+                        currentHost = bootstrapHost;
+                        currentPort = bootstrapPort;
+                    //}
                 }
             }
 
+            int attemptsOnCurrentBroker = 0;
+
+            // TODO change MAX_RECONNECT_ATTEMPTS in a reasonable amount
             for (int attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
                 try {
                     Thread.sleep(RETRY_INTERVAL_MS);
@@ -204,9 +247,18 @@ public class Client implements Publisher, Subscriber {
                     ConsoleAppender.asyncMessage(String.format("[Client %s] Reconnect attempt %d/%d failed.",
                             clientId, attempt, MAX_RECONNECT_ATTEMPTS));
 
-                    if (attempt == 1 && !(bootstrapHost.equals(currentHost) && bootstrapPort == currentPort)) {
-                        currentHost = bootstrapHost;
-                        currentPort = bootstrapPort;
+                    attemptsOnCurrentBroker++;
+
+                    if (brokerAddresses != null) {
+                        if (attemptsOnCurrentBroker >= SAME_BROKER_RETRY_ATTEMPTS) {
+                            advanceToNextBroker();
+                            attemptsOnCurrentBroker = 0;
+                        }
+                    } else {
+                        if (attempt == 1 && !(bootstrapHost.equals(currentHost) && bootstrapPort == currentPort)) {
+                            currentHost = bootstrapHost;
+                            currentPort = bootstrapPort;
+                        }
                     }
                 }
             }
@@ -215,6 +267,21 @@ public class Client implements Publisher, Subscriber {
         }, clientId + "-reconnect");
         t.setDaemon(true);
         t.start();
+    }
+
+    private void advanceToNextBroker() {
+        if (brokerAddresses == null || brokerAddresses.isEmpty()) {
+            return;
+        }
+
+        int nextIndex = (currentBrokerIndex.get() + 1) % brokerAddresses.size();
+        currentBrokerIndex.set(nextIndex);
+
+        Address next = brokerAddresses.get(nextIndex);
+        currentHost = next.getHost();
+        currentPort = next.getPort();
+
+        System.out.println(clientId + ": rotating to next broker in list -> " + currentHost + ":" + currentPort);
     }
 
     // ------------------------------------------------------------------
