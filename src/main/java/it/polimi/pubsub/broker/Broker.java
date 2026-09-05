@@ -881,9 +881,11 @@ public class Broker {
                 BROKER_ID, msg.getLeaderHost(), msg.getLeaderPort()));
 
         if (raftEngine.getRole() == LEADER){
-            //TODO update routing tables
-
             try{
+                // Updating routing table.
+                // It's the first step, otherwise the new leader would see the old leader as still interested to some topics
+                pubSubRouter.handleLeaderModification(msg.getSenderId(), msg.getLeaderId());
+
                 // Creating connection to new leader of the cluster
                 connectToPeer(msg.getLeaderHost(), msg.getLeaderPort());
 
@@ -891,11 +893,9 @@ public class Broker {
                 BrokerHandler handler = this.connectionRegistry.getBrokerHandler(msg.getSenderId());
                 handler.forceDisconnect();
 
-                // Updating routing table
-                pubSubRouter.handleRedirectToNewLeader(msg);
-
-            }catch (Exception e){
-                //TODO insert error message
+            } catch (Exception e){
+                ConsoleAppender.asyncMessage(String.format("[Broker %s] Error while redirecting to leader at %s:%d",
+                        BROKER_ID, msg.getLeaderHost(), msg.getLeaderPort()));
             }
         } else
             joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
