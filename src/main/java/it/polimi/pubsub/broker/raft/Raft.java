@@ -146,6 +146,8 @@ public class Raft {
     }
 
     public synchronized void handleRequestVote(RequestVoteMessage msg) {
+        ensureClusterMember(msg.getSenderId());
+
         int candidateTerm = msg.getTerm();
 
         if (candidateTerm > currentTerm) {
@@ -172,6 +174,13 @@ public class Raft {
                 BROKER_ID, msg.getSenderId(), candidateTerm, voteGranted));
     }
 
+    private void ensureClusterMember(String brokerId) {
+        BrokerHandler handler = connectionRegistry.getBrokerHandler(brokerId);
+        if (handler != null) {
+            handler.markAsClusterMember();
+        }
+    }
+
     private boolean isCandidateLogUpToDate(int candidateLastTerm, int candidateLastIndex) {
         int myLastTerm = getLastLogTerm();
         int myLastIndex = getLastLogIndex();
@@ -188,6 +197,8 @@ public class Raft {
     }
 
     public synchronized void handleRequestVoteAck(RequestVoteAckMessage msg) {
+        ensureClusterMember(msg.getSenderId());
+
         if (msg.getTerm() > currentTerm) {
             currentTerm = msg.getTerm();
             votedFor = null;
@@ -303,6 +314,8 @@ public class Raft {
     }
 
     public synchronized void handleAppendEntry(AppendEntryMessage msg) throws Exception {
+        ensureClusterMember(msg.getSenderId());
+
         if (msg.getLeaderTerm() < currentTerm) {
             sendAppendEntryNack(msg, false);
             return;
@@ -313,6 +326,8 @@ public class Raft {
         if (msg.getLeaderTerm() > currentTerm || state.getRole() != BrokerRole.FOLLOWER) {
             becomeFollower(msg.getLeaderTerm(), msg.getSenderId());
         }
+
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Received APPEND_ENTRY from %s", BROKER_ID, msg.getSenderId()));
 
         int prevLogIndex = msg.getPrevLogIndex();
         int prevLogTerm = msg.getPrevLogTerm();
@@ -345,6 +360,8 @@ public class Raft {
     }
 
     public synchronized void handleInstallSnapshot(InstallSnapshotMessage msg) throws Exception {
+        ensureClusterMember(msg.getSenderId());
+
         // Reject obsolete terms
         if (msg.getLeaderTerm() < currentTerm) {
             sendInstallSnapshotAck(msg.getSenderId());
