@@ -10,6 +10,8 @@ TESTS=(
     "test_packet_loss.sh"
     "test_leader_election.sh"
     "test_crash_recovery.sh"
+    "test_message_deduplication.sh"
+    "test_packet_corruption.sh"
 )
 
 # Move to the scripts directory to ensure correct relative paths

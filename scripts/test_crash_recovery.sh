@@ -17,12 +17,12 @@ sleep 10
 
 echo "--- METRICS: CRASH RECOVERY ---"
 RECOVERED=$(docker logs broker3 2>&1 | grep "State recovered from WAL" | wc -l)
-SYNCED=$(docker logs broker3 2>&1 | grep "Successfully installed distributed snapshot" | wc -l)
+SYNCED_SNAPSHOT=$(docker logs broker3 2>&1 | grep "Successfully installed distributed snapshot" | wc -l)
 SYNCED_ENTRIES=$(docker logs broker3 2>&1 | grep "Received APPEND_ENTRY" | wc -l)
 
 if [ "$RECOVERED" -gt 0 ]; then
     echo "Result: broker3 successfully read local WAL upon restart."
-if [ "$RECOVERED" -gt 0 ]; then
+elif [ "$RECOVERED" -gt 0 ]; then
     echo "Result: broker3 successfully read local WAL upon restart."
 else
     echo "Result: FAIL - broker3 did not read local WAL."
