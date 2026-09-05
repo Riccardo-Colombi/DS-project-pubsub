@@ -11,12 +11,10 @@ import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import it.polimi.pubsub.messages.brokerMessages.RedirectToLeaderMessage;
 import it.polimi.pubsub.utils.ConsoleAppender;
 
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -257,6 +255,21 @@ public class PubSubRouter {
         }
     }
 
+    public void handleRedirectToNewLeader(RedirectToLeaderMessage msg){
+        for(String topic : topicSubscribersTable.getTopics()){
+
+            // Modify for each topic the NextHop with the new Leader
+            if (topicSubscribersTable.getNextHopOfInterestedBrokers(topic).contains(msg.getSenderId())){
+                topicSubscribersTable.modifyNextHopForBroker(topic, msg.getSenderId(), msg.getLeaderId());
+            }
+
+            // Modify for each topic the interested Broker with the new Leader
+            if (topicSubscribersTable.getInterestedBrokers(topic).contains(msg.getSenderId())) {
+                topicSubscribersTable.modifyInterestedBroker(topic, msg.getSenderId(), msg.getLeaderId());
+            }
+        }
+    }
+
     public void shareTopicSubscribers(BrokerHandler handler) {
         topicSubscribersTable.getTopics().forEach(topic -> {
             if (!topicSubscribersTable.getInterestedClients(topic).isEmpty()) {
@@ -329,4 +342,6 @@ public class PubSubRouter {
             }
         }
     }
+
+
 }

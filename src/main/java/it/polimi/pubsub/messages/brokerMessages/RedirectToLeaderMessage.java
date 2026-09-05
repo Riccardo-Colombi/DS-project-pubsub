@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class RedirectToLeaderMessage extends Message {
 
+    private final String leaderId;
     private final String leaderHost;
     private final int leaderPort;
     private final int leaderClientPort;
@@ -18,13 +19,20 @@ public class RedirectToLeaderMessage extends Message {
             @JsonProperty("senderId") String senderId,
             @JsonProperty("sequenceNumber") long sequenceNumber,
             @JsonProperty("timestamp") long timestamp,
+            @JsonProperty("leaderId") String leaderId,
             @JsonProperty("leaderHost") String leaderHost,
             @JsonProperty("leaderPort") int leaderPort,
             @JsonProperty("leaderClientPort") int leaderClientPort) {
         super(senderId, sequenceNumber, timestamp);
+        this.leaderId = leaderId;
         this.leaderHost = leaderHost;
         this.leaderPort = leaderPort;
         this.leaderClientPort = leaderClientPort;
+    }
+
+    @JsonProperty("leaderId")
+    public String getLeaderId() {
+        return leaderId;
     }
 
     @JsonProperty("leaderHost")

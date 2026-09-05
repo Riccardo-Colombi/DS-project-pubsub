@@ -573,13 +573,13 @@ public class Broker {
         long seq = getMessageCounter();
         RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
-                raftEngine.getLeaderHost(), raftEngine.getLeaderPort(), raftEngine.getLeaderClientPort());
+                raftEngine.getCurrentLeaderId(), raftEngine.getLeaderHost(), raftEngine.getLeaderPort(), raftEngine.getLeaderClientPort());
 
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(clientId);
 
         if (handler != null) {
             handler.send(redirect);
-            ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirecting client %s to leader at %s:%d",
+            ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirecting client/broker %s to leader at %s:%d",
                     BROKER_ID, clientId, raftEngine.getLeaderHost(), raftEngine.getLeaderClientPort()));
         }
     }
@@ -879,7 +879,26 @@ public class Broker {
     private void handleRedirectToLeader(RedirectToLeaderMessage msg) throws Exception {
         ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirected to leader at %s:%d",
                 BROKER_ID, msg.getLeaderHost(), msg.getLeaderPort()));
-        joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
+
+        if (raftEngine.getRole() == LEADER){
+            //TODO update routing tables
+
+            try{
+                // Creating connection to new leader of the cluster
+                connectToPeer(msg.getLeaderHost(), msg.getLeaderPort());
+
+                // Deleting connection to old leader of the cluster
+                BrokerHandler handler = this.connectionRegistry.getBrokerHandler(msg.getSenderId());
+                handler.forceDisconnect();
+
+                // Updating routing table
+                pubSubRouter.handleRedirectToNewLeader(msg);
+
+            }catch (Exception e){
+                //TODO insert error message
+            }
+        } else
+            joinCluster(msg.getLeaderHost(), msg.getLeaderPort());
     }
 
     public void appendToWal(Message msg) throws Exception {

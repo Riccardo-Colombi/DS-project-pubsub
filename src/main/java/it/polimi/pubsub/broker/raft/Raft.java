@@ -561,7 +561,7 @@ public class Raft {
 
         if (!BROKER_ID.equals(currentLeaderId)) {
             long seq = broker.getMessageCounter();
-            RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(BROKER_ID, seq, System.currentTimeMillis(), leaderHost, leaderPort, leaderClientPort);
+            RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(BROKER_ID, seq, System.currentTimeMillis(), currentLeaderId, leaderHost, leaderPort, leaderClientPort);
             broker.sendAck(requesterId, msg.getMessageId());
             connectionRegistry.getConnectionHandler(requesterId).send(redirect);
             return;
