@@ -158,6 +158,22 @@ public class TopicSubscribersTable {
         return wasPresent.get();
     }
 
+    public void modifyInterestedBroker(String topic, String oldBrokerId, String newBrokerId) {
+        String nextHop = getNextHopOfInterestedBroker(oldBrokerId, topic);
+        removeBrokerSubscription(topic, oldBrokerId);
+        addBrokerSubscription(topic, newBrokerId, nextHop);
+    }
+
+    public void modifyNextHopForBroker(String topic, String oldBrokerId, String newBrokerId) {
+        Map<String, String> brokers = getInterestedBrokersInfo(topic);
+        for (String interestedBroker : brokers.keySet()) {
+            if (brokers.get(interestedBroker).equals(oldBrokerId)) {
+                removeBrokerSubscription(topic, interestedBroker);
+                addBrokerSubscription(topic, interestedBroker, newBrokerId);
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Query methods
     // ------------------------------------------------------------------
@@ -191,6 +207,16 @@ public class TopicSubscribersTable {
             return subscribers.getInterestedBrokersNextHop();
 
         return Collections.emptySet();
+    }
+
+    public String getNextHopOfInterestedBroker(String brokerId, String topic) {
+        String nextHop = null;
+        TopicSubscriptions subscribers = topicSubscribers.get(topic);
+
+        if (subscribers != null)
+            nextHop = subscribers.getBrokers().get(brokerId);
+
+        return nextHop;
     }
 
     public Map<String, String> getInterestedBrokersInfo(String topic) {

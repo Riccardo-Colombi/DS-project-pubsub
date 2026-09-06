@@ -43,6 +43,7 @@ public class ClientRedirectTest {
                         "broker-follower",
                         1L,
                         System.currentTimeMillis(),
+                        "BROKER_LEADER_ID", //TODO change this id
                         "localhost",
                         8089,
                         8089
