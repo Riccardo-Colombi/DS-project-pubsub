@@ -585,7 +585,20 @@ public class Raft {
         }
 
         BrokerHandler requesterHandler = connectionRegistry.getBrokerHandler(requesterId);
-        if (requesterHandler != null) requesterHandler.markAsClusterMember();
+        if (requesterHandler != null) {
+            requesterHandler.markAsClusterMember();
+
+            followerNextIndex.put(requesterId, commitIndex > 0 ? 1 : getLastLogIndex() + 1);
+            followerMatchIndex.put(requesterId, 0);
+
+            if (commitIndex > 0) {
+                try {
+                    sendInstallSnapshotToFollower(requesterId);
+                } catch (Exception e) {
+                    ConsoleAppender.asyncMessage("[Raft " + BROKER_ID + "] Error sending snapshot to new follower: " + e.getMessage());
+                }
+            }
+        }
 
         followerNextIndex.put(requesterId, commitIndex > 0 ? 1 : getLastLogIndex() + 1);
         followerMatchIndex.put(requesterId, 0);

@@ -175,16 +175,19 @@ public class SnapshotIntegrationTest {
         Thread.sleep(4000);
         publisher.disconnect();
 
-        int leaderCommitIndex = leader.getCommitIndex();
-
         Broker restartedFollower = new Broker("follDS", 9197, 9187, followerWal, followerOffline);
         restartedFollower.run();
         restartedFollower.joinCluster("localhost", 9196);
 
-        Thread.sleep(4000);
+        int leaderCommitIndex = leader.getCommitIndex();
 
-        assertEquals(leaderCommitIndex, restartedFollower.getCommitIndex(),
-                "Follower failed to install distributed snapshot from leader.");
+        int maxRetries = 10;
+        int followerCommit = 0;
+        while (maxRetries-- > 0 && (followerCommit = restartedFollower.getCommitIndex()) < leaderCommitIndex) {
+            Thread.sleep(500);
+        }
+        assertEquals(followerCommit, leaderCommitIndex,
+                "Follower commitIndex (" + followerCommit + ") should be at least leader's (" + leaderCommitIndex + ")");
 
         restartedFollower.crash();
         leader.crash();

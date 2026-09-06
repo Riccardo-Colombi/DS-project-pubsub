@@ -101,7 +101,8 @@ public class Client implements Publisher, Subscriber {
     // ------------------------------------------------------------------
 
     public void connect() throws Exception {
-        Socket socket = new Socket(currentHost, currentPort);
+        Socket socket = new Socket();
+        socket.connect(new java.net.InetSocketAddress(currentHost, currentPort), 2000);
         this.connection = new TcpConnection(socket);
 
         disconnected.set(false);
