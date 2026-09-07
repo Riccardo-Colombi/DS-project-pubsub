@@ -35,7 +35,7 @@ public class CandidateState implements BrokerState {
                 HeartbeatMessage hb = (HeartbeatMessage) message;
                 if (hb.isLeaderHeartbeat() && hb.getTerm() >= broker.getCurrentTerm()) {
                     broker.becomeFollower(hb.getTerm(), hb.getSenderId());
-                    broker.updateLeaderClientPort(hb.getLeaderClientPort());
+                    broker.updateLeaderEndpoint(hb);
                 }
                 break;
 

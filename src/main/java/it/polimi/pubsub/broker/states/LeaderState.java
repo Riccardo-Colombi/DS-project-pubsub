@@ -56,7 +56,7 @@ public class LeaderState implements BrokerState {
                     broker.updateHeartbeat(hb.getSenderId());
                     if (hb.isLeaderHeartbeat() && hb.getTerm() > broker.getCurrentTerm()) {
                         broker.becomeFollower(hb.getTerm(), hb.getSenderId());
-                        broker.updateLeaderClientPort(hb.getLeaderClientPort());
+                        broker.updateLeaderEndpoint(hb);
                     }
                     break;
 

@@ -35,10 +35,12 @@ public class Raft {
     private volatile BrokerState state;
     private String clusterId;
     private volatile int currentTerm;
-    private String currentLeaderId;
-    private String leaderHost;
-    private int leaderPort;
-    private int leaderClientPort;
+
+    /** null == leader unknown. Replace wholesale, never mutate in place. */
+    private volatile LeaderEndpoint leader = null;
+
+    /** This node's own routable address, resolved once at construction. */
+    private final String ADVERTISED_HOST;
 
     private volatile String votedFor = null;
     private volatile int electionVotes = 0;
@@ -59,6 +61,7 @@ public class Raft {
         this.broker = broker;
         this.connectionRegistry = connectionRegistry;
         this.electionTimeoutMs = ThreadLocalRandom.current().nextLong(6000, 12001);
+        this.ADVERTISED_HOST = resolveAdvertisedHost();
         this.state = new SoloState(broker);
     }
 
@@ -86,17 +89,22 @@ public class Raft {
         return lastApplied;
     }
 
-    public String getLeaderHost() {
-        return leaderHost;
+    public LeaderEndpoint getLeader() {
+        return leader;
     }
 
-    public int getLeaderPort() {
-        return leaderPort;
+    public boolean hasKnownLeader() {
+        LeaderEndpoint l = leader;
+        return l != null && l.isComplete();
     }
 
-    public int getLeaderClientPort() {
-        return leaderClientPort;
-    }
+    public String getLeaderHost() { LeaderEndpoint l = leader; return l == null ? null : l.host(); }
+
+    public int    getLeaderPort()    { LeaderEndpoint l = leader; return l == null ? -1   : l.brokerPort(); }
+
+    public int    getLeaderClientPort() { LeaderEndpoint l = leader; return l == null ? -1 : l.clientPort(); }
+
+    public String getCurrentLeaderId()  { LeaderEndpoint l = leader; return l == null ? null : l.leaderId(); }
 
     public long getElectionTimeoutMs() {
         return electionTimeoutMs;
@@ -200,9 +208,7 @@ public class Raft {
         ensureClusterMember(msg.getSenderId());
 
         if (msg.getTerm() > currentTerm) {
-            currentTerm = msg.getTerm();
-            votedFor = null;
-            state = new FollowerState(broker);
+            becomeFollower(msg.getTerm(), null);
             return;
         }
 
@@ -220,13 +226,7 @@ public class Raft {
 
     public synchronized void becomeLeader() {
         state = new LeaderState(broker);
-        currentLeaderId = BROKER_ID;
-
-        // Automatically resolves the actual LAN IP of this machine
-        this.leaderHost = resolveAdvertisedHost();
-
-        this.leaderPort = BROKER_PORT;
-        this.leaderClientPort = CLIENT_PORT;
+        this.leader = new LeaderEndpoint(BROKER_ID, ADVERTISED_HOST, BROKER_PORT, CLIENT_PORT);
 
         int leaderLastIndex = getLastLogIndex();
         for (BrokerHandler handler : connectionRegistry.getClusterMembers()) {
@@ -234,8 +234,8 @@ public class Raft {
             followerMatchIndex.put(handler.getNodeId(), 0);
         }
 
-        ConsoleAppender.asyncMessage(String.format("[Raft %s] Became LEADER for term %d",
-                BROKER_ID, currentTerm));
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Became LEADER for term %d at %s",
+                BROKER_ID, currentTerm, leader));
         broker.sendHeartbeat();
     }
 
@@ -244,20 +244,37 @@ public class Raft {
             currentTerm = term;
             votedFor = null;
         }
-        if (leaderId != null) {
-            currentLeaderId = leaderId;
-            BrokerHandler leaderHandler = connectionRegistry.getBrokerHandler(leaderId);
-            if (leaderHandler != null) {
-                this.leaderHost = leaderHandler.getRemoteHost();
-                this.leaderPort = leaderHandler.getRemoteBrokerPort();
-            }
+
+        if (leaderId == null) {
+            // Stepped down without knowing the new leader.
+            // Dropping the endpoint is mandatory: keeping it means redirecting
+            // clients to a node that is no longer leader.
+            if (leader != null)
+                ConsoleAppender.asyncMessage(String.format(
+                        "[Raft %s] Leader unknown for term %d — endpoint cleared", BROKER_ID, currentTerm));
+            this.leader = null;
+        } else {
+            BrokerHandler h = connectionRegistry.getBrokerHandler(leaderId);
+            String host = (h != null && isUsableHost(h.getRemoteHost())) ? h.getRemoteHost() : null;
+            int brokerPort = (h != null) ? h.getRemoteBrokerPort() : -1;
+
+            LeaderEndpoint previous = leader;
+            // The client port is NOT knowable here (no socket carries it).
+            // Carry it over only if this is the same leader we already knew.
+            int clientPort = (previous != null && previous.isSameLeader(leaderId))
+                    ? previous.clientPort() : -1;
+
+            this.leader = (host == null)
+                    ? new LeaderEndpoint(leaderId, null, brokerPort, clientPort)  // incomplete → redirects blocked
+                    : new LeaderEndpoint(leaderId, host, brokerPort, clientPort);
         }
+
         electionVotes = 0;
         state = new FollowerState(broker);
         lastLeaderHeartbeatMs = System.currentTimeMillis();
 
-        ConsoleAppender.asyncMessage(String.format("[Raft %s] Became FOLLOWER for term %d (Leader: %s)",
-                BROKER_ID, currentTerm, leaderId));
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Became FOLLOWER for term %d (leader: %s)",
+                BROKER_ID, currentTerm, leader));
     }
 
     public synchronized void replicateToFollowers(Message msg) throws Exception {
@@ -553,13 +570,12 @@ public class Raft {
 
         this.clusterId = java.util.UUID.randomUUID().toString();
         this.currentTerm = 1;
-        this.currentLeaderId = BROKER_ID;
 
-        // Automatically resolves the actual LAN IP of this machine
-        this.leaderHost = resolveAdvertisedHost();
+        this.leader = new LeaderEndpoint(BROKER_ID, ADVERTISED_HOST, BROKER_PORT, CLIENT_PORT);
+        this.state = new LeaderState(broker);
 
-        this.leaderPort = BROKER_PORT;
-        this.leaderClientPort = CLIENT_PORT;
+        ConsoleAppender.asyncMessage(String.format("[Raft %s] Cluster created (term=%d, role=LEADER, %s)",
+                BROKER_ID, currentTerm, leader));
 
         this.state = new LeaderState(broker);
         ConsoleAppender.asyncMessage(String.format("[Raft %s] Cluster created (term=%d, role=LEADER)",
@@ -570,12 +586,24 @@ public class Raft {
         // System.out.println("Handling Join request from:" + msg.getSenderId() + "recived by" + this.BROKER_ID);
 
         String requesterId = msg.getSenderId();
+        LeaderEndpoint l = leader;
 
-        if (!BROKER_ID.equals(currentLeaderId)) {
+        if (l == null || !BROKER_ID.equals(l.leaderId())) {
+            ConnectionHandler ch = connectionRegistry.getConnectionHandler(requesterId);
+            if (ch == null) return;
+
+            if (l == null || !l.isComplete()) {
+                ConsoleAppender.asyncMessage(String.format(
+                        "[Raft %s] Cannot redirect join from %s — leader unknown", BROKER_ID, requesterId));
+                return;   // requester retries; do not send a broken redirect // todo check logic each time we need to send redirect
+            }
+
             long seq = broker.getMessageCounter();
-            RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(BROKER_ID, seq, System.currentTimeMillis(), currentLeaderId, leaderHost, leaderPort, leaderClientPort);
+            RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(
+                    BROKER_ID, seq, System.currentTimeMillis(),
+                    l.leaderId(), l.host(), l.brokerPort(), l.clientPort());
             broker.sendAck(requesterId, msg.getMessageId());
-            connectionRegistry.getConnectionHandler(requesterId).send(redirect);
+            ch.send(redirect);
             return;
         }
 
@@ -608,7 +636,7 @@ public class Raft {
         JoinClusterAckMessage joinAck = new JoinClusterAckMessage(
                 BROKER_ID, seq, System.currentTimeMillis(),
                 clusterId, currentTerm, peers,
-                this.leaderHost,
+                ADVERTISED_HOST,
                 BROKER_PORT,
                 CLIENT_PORT
         );
@@ -620,19 +648,17 @@ public class Raft {
     public void handleJoinClusterAck(JoinClusterAckMessage msg) {
         this.clusterId = msg.getClusterId();
         this.currentTerm = msg.getCurrentTerm();
-        this.currentLeaderId = msg.getSenderId();
         this.state = new FollowerState(broker);
 
         BrokerHandler leaderHandler = connectionRegistry.getBrokerHandler(msg.getSenderId());
         if (leaderHandler != null) leaderHandler.markAsClusterMember();
 
-        // Prefer the address of the socket we are actually connected on;
-        // fall back to the self-reported one only if that is unusable.
+        // Trust the socket we're actually connected on over the leader's self-report.
         String observed = (leaderHandler != null) ? leaderHandler.getRemoteHost() : null;
-        this.leaderHost = isUsableHost(observed) ? observed : msg.getLeaderHost();
+        String host = isUsableHost(observed) ? observed : msg.getLeaderHost();
 
-        this.leaderPort = msg.getLeaderPort();
-        this.leaderClientPort = msg.getLeaderClientPort();
+        this.leader = new LeaderEndpoint(
+                msg.getSenderId(), host, msg.getLeaderPort(), msg.getLeaderClientPort());
 
         this.votedFor = null;
         this.electionVotes = 0;
@@ -654,7 +680,7 @@ public class Raft {
         });
 
         ConsoleAppender.asyncMessage(String.format("[Raft %s] Joined cluster (term=%d, leader=%s)",
-                BROKER_ID, currentTerm, currentLeaderId));
+                BROKER_ID, currentTerm, leader));
     }
 
     private static boolean isUsableHost(String h) {
@@ -694,9 +720,6 @@ public class Raft {
     }
 
     // Getters
-    public String getCurrentLeaderId() {
-        return currentLeaderId;
-    }
 
     public String getVotedFor() {
         return votedFor;
@@ -704,6 +727,10 @@ public class Raft {
 
     public String getClusterId() {
         return clusterId;
+    }
+
+    public String getAdvertisedHost() {
+        return ADVERTISED_HOST;
     }
 
     // determine the IP address that a server or message broker should "advertise" to external clients so they know how to connect to it
@@ -723,8 +750,35 @@ public class Raft {
     }
 
     // Setters
-    public synchronized void setLeaderClientPort(int port) {
-        this.leaderClientPort = port;
+    /**
+     * Called on every leader heartbeat. Rebuilds the full endpoint atomically.
+     * Prefers the socket's remote address over the leader's self-report.
+     */
+    public synchronized void updateLeaderEndpoint(String leaderId, String advertisedHost, int brokerPort, int clientPort) {
+        if (leaderId == null || clientPort <= 0) return;
+
+        LeaderEndpoint current = leader;
+        if (current != null && !current.isSameLeader(leaderId)) {
+            // A heartbeat from someone we don't consider leader — becomeFollower decides, not us.
+            return;
+        }
+
+        String host = null;
+        BrokerHandler h = connectionRegistry.getBrokerHandler(leaderId);
+        if (h != null && isUsableHost(h.getRemoteHost())) host = h.getRemoteHost();
+        else if (isUsableHost(advertisedHost)) host = advertisedHost;
+        else if (current != null) host = current.host();
+        if (host == null) return;
+
+        int bp = brokerPort > 0 ? brokerPort
+                : (h != null ? h.getRemoteBrokerPort() : (current != null ? current.brokerPort() : -1));
+
+        LeaderEndpoint updated = new LeaderEndpoint(leaderId, host, bp, clientPort);
+        if (!updated.equals(current)) {
+            this.leader = updated;
+            ConsoleAppender.asyncMessage(String.format(
+                    "[Raft %s] Leader endpoint updated: %s", BROKER_ID, updated));
+        }
     }
 
     // Clear memory

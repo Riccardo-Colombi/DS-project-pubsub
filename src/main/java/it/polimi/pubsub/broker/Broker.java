@@ -2,6 +2,7 @@ package it.polimi.pubsub.broker;
 
 import it.polimi.pubsub.broker.components.BrokerHandler;
 import it.polimi.pubsub.broker.components.*;
+import it.polimi.pubsub.broker.raft.LeaderEndpoint;
 import it.polimi.pubsub.broker.raft.Raft;
 import it.polimi.pubsub.broker.storage.RaftMetadata;
 import it.polimi.pubsub.broker.storage.WriteAheadLog;
@@ -411,27 +412,18 @@ public class Broker {
 
         boolean isLeader = raftEngine.getRole() == LEADER;
         HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis(),
-                raftEngine.getCurrentTerm(), getCurrentLeaderId(), isLeader, isLeader ? CLIENT_PORT : -1);
+                raftEngine.getCurrentTerm(), getCurrentLeaderId(), isLeader,
+                isLeader ? CLIENT_PORT : -1,
+                isLeader ? raftEngine.getAdvertisedHost() : null,
+                isLeader ? BROKER_PORT : -1);
 
         for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
             handler.send(hm);
             handler.updateHeartbeat();
-
-            if(raftEngine.getRole() == LEADER) {
+            if (raftEngine.getRole() == LEADER)
                 raftEngine.sendAppendEntriesToFollower(handler.getNodeId());
-            }
         }
     }
-
-    /*
-    private void sendHeartbeat() {
-        HeartbeatMessage hm = new HeartbeatMessage(BROKER_ID, 0, System.currentTimeMillis());
-
-        for (BrokerHandler handler : connectionRegistry.getConnectedBrokerHandlers()) {
-            handler.send(hm);
-        }
-    }
-    */
 
     // ------------------------------------------------------------------
     // Heartbeat checker
@@ -563,23 +555,40 @@ public class Broker {
     // ------------------------------------------------------------------
 
     public void redirectClientToLeader(String clientId) {
-        if (raftEngine.getLeaderHost() == null || raftEngine.getLeaderClientPort() <= 0) {
-            ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Cannot redirect client %s — leader address unknown", BROKER_ID, clientId));
+        redirectClientToLeader(clientId, 0);
+    }
+
+    private void redirectClientToLeader(String clientId, int attempt) {
+        if (crashed) return;
+
+        LeaderEndpoint leader = raftEngine.getLeader();
+
+        if (leader == null || !leader.isComplete()) {
+            if (attempt >= 20) {   // ~10s, longer than the worst-case election timeout
+                ConsoleAppender.asyncMessage(String.format(
+                        "[Broker %s] [ERROR] Giving up redirect of %s — no leader elected",
+                        BROKER_ID, clientId));
+                return;
+            }
+            scheduler.schedule(() -> {
+                if (raftEngine.getRole() == FOLLOWER && connectionRegistry.isKnownClient(clientId))
+                    redirectClientToLeader(clientId, attempt + 1);
+            }, 500, TimeUnit.MILLISECONDS);
             return;
         }
 
-        long seq = getMessageCounter();
-        RedirectToLeaderMessage redirect = new RedirectToLeaderMessage(
-                BROKER_ID, seq, System.currentTimeMillis(),
-                raftEngine.getCurrentLeaderId(), raftEngine.getLeaderHost(), raftEngine.getLeaderPort(), raftEngine.getLeaderClientPort());
+        if (BROKER_ID.equals(leader.leaderId())) return;   // we are the leader; nothing to redirect
 
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(clientId);
+        if (handler == null) return;
 
-        if (handler != null) {
-            handler.send(redirect);
-            ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirecting client/broker %s to leader at %s:%d",
-                    BROKER_ID, clientId, raftEngine.getLeaderHost(), raftEngine.getLeaderClientPort()));
-        }
+        long seq = getMessageCounter();
+        handler.send(new RedirectToLeaderMessage(
+                BROKER_ID, seq, System.currentTimeMillis(),
+                leader.leaderId(), leader.host(), leader.brokerPort(), leader.clientPort()));
+
+        ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirecting %s to leader at %s:%d",
+                BROKER_ID, clientId, leader.host(), leader.clientPort()));
     }
 
     /**
@@ -987,8 +996,13 @@ public class Broker {
                 BROKER_ID));
     }
 
-    public void updateLeaderClientPort(int port) {
-        raftEngine.setLeaderClientPort(port);
+    public void updateLeaderEndpoint(HeartbeatMessage hb) {
+        raftEngine.updateLeaderEndpoint(hb.getSenderId(), hb.getLeaderHost(),
+                hb.getLeaderPort(), hb.getLeaderClientPort());
+    }
+
+    public boolean hasKnownLeader() {
+        return raftEngine.hasKnownLeader();
     }
 
     public String getCurrentLeaderId() {

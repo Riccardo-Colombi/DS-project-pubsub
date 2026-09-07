@@ -40,10 +40,10 @@ public class FollowerState implements BrokerState {
                     if (hb.getTerm() == broker.getCurrentTerm()
                             && hb.getSenderId().equals(broker.getCurrentLeaderId()))
                         broker.updateLeaderHeartbeat();
-                    else {
+                    else
                         broker.becomeFollower(hb.getTerm(), hb.getSenderId());
-                    }
-                    broker.updateLeaderClientPort(hb.getLeaderClientPort());
+
+                    broker.updateLeaderEndpoint(hb);
                 }
                 break;
 
