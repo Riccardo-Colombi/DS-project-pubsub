@@ -1,6 +1,5 @@
-package it.polimi.pubsub.broker;
+package it.polimi.pubsub.broker.components;
 
-import it.polimi.pubsub.broker.components.OfflineMessageStore;
 import it.polimi.pubsub.messages.PublishMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
