@@ -293,7 +293,7 @@ public class Broker {
                 wal.append(message);
 
                 // Filtering the ACK out because they are not that relevant
-                if (message.getType() != MessageType.ACK) {
+                if (message.getType() != MessageType.ACK && (message.getType() != MessageType.BROKER_SUBSCRIBE && this.getRole() == FOLLOWER)) {
                     ConsoleAppender.asyncMessage(String.format("[Broker %s] Received %s (msgId: %s)",
                             BROKER_ID, message.getType(), message.getSequenceNumber()));
                 }
