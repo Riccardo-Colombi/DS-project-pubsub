@@ -59,8 +59,6 @@ public class FollowerState implements BrokerState {
             case PUBLISH:
             case SUBSCRIBE:
             case UNSUBSCRIBE:
-            case BROKER_SUBSCRIBE:
-            case BROKER_UNSUBSCRIBE:
                 broker.redirectClientToLeader(message.getSenderId());
                 break;
 

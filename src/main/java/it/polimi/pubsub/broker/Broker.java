@@ -159,7 +159,7 @@ public class Broker {
                     handler.start();
                     pubSubRouter.shareTopicSubscribers(handler);
 
-                    ConsoleAppender.asyncMessage(String.format("[Broker %s] Connected to %s",
+                    ConsoleAppender.asyncMessage(String.format("[Broker %s] Connected to peer: %s",
                             BROKER_ID, handler.getNodeId()));
                 } catch (Exception e) {
                     ConsoleAppender.asyncMessage(String.format("[Broker %s] [ERROR] Handshake failed, rejecting connection: %s",
@@ -875,6 +875,10 @@ public class Broker {
     }
 
     private void handleRedirectToLeader(RedirectToLeaderMessage msg) throws Exception {
+        if (BROKER_ID.equals(msg.getLeaderId())) {
+            return;
+        }
+
         ConsoleAppender.asyncMessage(String.format("[Broker %s] Redirected to leader at %s:%d",
                 BROKER_ID, msg.getLeaderHost(), msg.getLeaderPort()));
 
