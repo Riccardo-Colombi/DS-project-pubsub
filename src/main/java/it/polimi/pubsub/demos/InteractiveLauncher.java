@@ -5,6 +5,8 @@ import it.polimi.pubsub.client.Client;
 import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
 
 public class InteractiveLauncher {
@@ -138,14 +140,33 @@ public class InteractiveLauncher {
     private static Client setupClient(Scanner scanner, String type) throws Exception {
         System.out.print("[Launcher] " + type + " ID: ");
         String id = scanner.nextLine();
-        System.out.print("[Launcher] Broker IP: ");
-        String ip = scanner.nextLine();
-        System.out.print("[Launcher] Broker Client Port: ");
-        int port = scanner.nextInt();
+
+        System.out.print("[Launcher] How many broker's addresses? ");
+        int brokerAddresses = scanner.nextInt();
         scanner.nextLine();
 
-        Client client = new Client(id, ip, port);
-        client.connect();
-        return client;
+        List<Client.Address> addresses = new ArrayList<Client.Address>();
+
+        String ip = " ";
+        int port = -1;
+
+        for (int i = 0; i < brokerAddresses; i++) {
+            System.out.print("[Launcher] Broker IP: ");
+            ip = scanner.nextLine();
+            System.out.print("[Launcher] Broker Client Port: ");
+            port = scanner.nextInt();
+            scanner.nextLine();
+            addresses.add(new Client.Address(ip, port));
+        }
+
+        if (brokerAddresses == 1) {
+            Client client = new Client(id, ip, port);
+            client.connect();
+            return client;
+        } else {
+            Client client = new Client(id, addresses);
+            client.connect();
+            return client;
+        }
     }
 }
