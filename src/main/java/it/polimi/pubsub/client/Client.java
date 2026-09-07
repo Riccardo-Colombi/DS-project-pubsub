@@ -34,7 +34,7 @@ public class Client implements Publisher, Subscriber {
     private static final long HEARTBEAT_INTERVAL_MS   = 3000;
     private static final long ACK_TIMEOUT_MS          = 5000;
     private static final long RETRY_INTERVAL_MS       = 2000;
-    private static final int  MAX_RECONNECT_ATTEMPTS  = 10;
+    private static final int  MAX_RECONNECT_ATTEMPTS  = 30;
     private static final int SAME_BROKER_RETRY_ATTEMPTS = 3;
 
     private final String clientId;
