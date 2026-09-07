@@ -119,8 +119,17 @@ public class InteractiveLauncher {
 
             if ("exit".equals(topic)) break;
 
-            client.subscribe(topic);
-            ConsoleAppender.asyncMessage("[Launcher - Subscriber] Subscribed to topic: " + topic);
+            ConsoleAppender.printPrompt("[Launcher - Subscriber] Is this a DURABLE subscription? (y/n) > ");
+            String durableChoice = scanner.nextLine();
+            ConsoleAppender.clearPrompt();
+
+            if ("y".equalsIgnoreCase(durableChoice)) {
+                client.subscribeDurable(topic);
+                ConsoleAppender.asyncMessage("[Launcher - Subscriber] Subscribed (DURABLE) to topic: " + topic);
+            } else {
+                client.subscribe(topic);
+                ConsoleAppender.asyncMessage("[Launcher - Subscriber] Subscribed (EPHEMERAL) to topic: " + topic);
+            }
         }
 
         client.disconnect();
