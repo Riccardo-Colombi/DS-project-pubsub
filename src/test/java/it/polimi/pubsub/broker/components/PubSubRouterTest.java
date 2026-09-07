@@ -3,9 +3,13 @@ package it.polimi.pubsub.broker.components;
 import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.messages.PublishMessage;
 import it.polimi.pubsub.messages.UnsubscribeMessage;
+import it.polimi.pubsub.messages.brokerMessages.BrokerSubscribeMessage;
+import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+
+import java.util.List;
 import java.util.Set;
 
 public class PubSubRouterTest {
@@ -121,17 +125,25 @@ public class PubSubRouterTest {
     }
 
     @Test
-    public void testHandleRedirectToNewLeader() {
-        it.polimi.pubsub.messages.brokerMessages.RedirectToLeaderMessage msg =
-                new it.polimi.pubsub.messages.brokerMessages.RedirectToLeaderMessage("oldLeader", 1, System.currentTimeMillis(), "newLeader", "127.0.0.1", 8080, 8081);
-
+    public void testHandleLeaderModification() {
         Mockito.when(mockTable.getTopics()).thenReturn(Set.of("TopicA"));
         Mockito.when(mockTable.getNextHopOfInterestedBrokers("TopicA")).thenReturn(Set.of("oldLeader"));
         Mockito.when(mockTable.getInterestedBrokers("TopicA")).thenReturn(Set.of("oldLeader"));
 
-        router.handleRedirectToNewLeader(msg);
+        Mockito.when(mockTable.addBrokerSubscription("TopicA", "newLeader", "newLeader")).thenReturn(true);
+        Mockito.when(mockTable.removeBrokerSubscription("TopicA", "oldLeader")).thenReturn(true);
+
+        BrokerHandler mockHandler = Mockito.mock(BrokerHandler.class);
+        Mockito.when(mockHandler.getNodeId()).thenReturn("broker3");
+        Mockito.when(mockRegistry.getConnectedBrokerHandlers()).thenReturn(List.of(mockHandler));
+
+        router.handleLeaderModification("oldLeader", "newLeader");
 
         Mockito.verify(mockTable, Mockito.times(1)).modifyNextHopForBroker("TopicA", "oldLeader", "newLeader");
-        Mockito.verify(mockTable, Mockito.times(1)).modifyInterestedBroker("TopicA", "oldLeader", "newLeader");
+        Mockito.verify(mockTable, Mockito.times(1)).addBrokerSubscription("TopicA", "newLeader", "newLeader");
+        Mockito.verify(mockTable, Mockito.times(1)).removeBrokerSubscription("TopicA", "oldLeader");
+
+        Mockito.verify(mockHandler, Mockito.times(1)).send(Mockito.any(BrokerSubscribeMessage.class));
+        Mockito.verify(mockHandler, Mockito.times(1)).send(Mockito.any(BrokerUnsubscribeMessage.class));
     }
 }
