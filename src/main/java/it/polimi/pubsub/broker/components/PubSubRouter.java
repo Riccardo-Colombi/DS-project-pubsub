@@ -11,7 +11,6 @@ import it.polimi.pubsub.messages.brokerMessages.BrokerUnsubscribeMessage;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import it.polimi.pubsub.messages.brokerMessages.RedirectToLeaderMessage;
 import it.polimi.pubsub.utils.ConsoleAppender;
 
 import java.util.*;
@@ -244,7 +243,7 @@ public class PubSubRouter {
                                 clientId, e.getMessage()));
                     }
                 }
-                // Non-durable offline client: message is dropped (original behaviour)
+                // Non-durable offline client: message is dropped (original behavior)
             }
 
             // Track only online clients, because they are the only one that received the message.
@@ -254,17 +253,30 @@ public class PubSubRouter {
         }
     }
 
-    public void handleRedirectToNewLeader(RedirectToLeaderMessage msg){
+    public void handleLeaderModification(String oldLeaderId, String newLeaderId) {
         for(String topic : topicSubscribersTable.getTopics()){
-
             // Modify for each topic the NextHop with the new Leader
-            if (topicSubscribersTable.getNextHopOfInterestedBrokers(topic).contains(msg.getSenderId())){
-                topicSubscribersTable.modifyNextHopForBroker(topic, msg.getSenderId(), msg.getLeaderId());
+            if (topicSubscribersTable.getNextHopOfInterestedBrokers(topic).contains(oldLeaderId)){
+                topicSubscribersTable.modifyNextHopForBroker(topic, oldLeaderId, newLeaderId);
             }
 
             // Modify for each topic the interested Broker with the new Leader
-            if (topicSubscribersTable.getInterestedBrokers(topic).contains(msg.getSenderId())) {
-                topicSubscribersTable.modifyInterestedBroker(topic, msg.getSenderId(), msg.getLeaderId());
+            if (topicSubscribersTable.getInterestedBrokers(topic).contains(oldLeaderId)) {
+                /*
+                can't directly use handleBrokerSubscribe and handleBrokerUnsubscribe due to wrong and unnecessary steps,
+                the concept is similar to these methods, but adapted for the current situation,
+                there's no actual sender of a Subscribe/Unsubscribe Broker Message, so to use the already existing methods we have to forge it
+                */
+
+                // concept similar to handleBrokerSubscribe
+                // forge the senderId as the newLeader
+                boolean newBrokerSubscription = topicSubscribersTable.addBrokerSubscription(topic, newLeaderId, newLeaderId);
+                if (newBrokerSubscription) forwardSubscribeMessage(topic, newLeaderId, newLeaderId);
+
+                // concept similar to handleBrokerUnsubscribe
+                // forge the senderId as the oldLeader
+                boolean removedBrokerSubscription = topicSubscribersTable.removeBrokerSubscription(topic, oldLeaderId);
+                if (removedBrokerSubscription) forwardUnsubscribeMessage(topic, oldLeaderId, oldLeaderId);
             }
         }
     }

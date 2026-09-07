@@ -158,20 +158,19 @@ public class TopicSubscribersTable {
         return wasPresent.get();
     }
 
-    public void modifyInterestedBroker(String topic, String oldBrokerId, String newBrokerId) {
-        String nextHop = getNextHopOfInterestedBroker(oldBrokerId, topic);
-        removeBrokerSubscription(topic, oldBrokerId);
-        addBrokerSubscription(topic, newBrokerId, nextHop);
-    }
-
     public void modifyNextHopForBroker(String topic, String oldBrokerId, String newBrokerId) {
-        Map<String, String> brokers = getInterestedBrokersInfo(topic);
-        for (String interestedBroker : brokers.keySet()) {
-            if (brokers.get(interestedBroker).equals(oldBrokerId)) {
-                removeBrokerSubscription(topic, interestedBroker);
-                addBrokerSubscription(topic, interestedBroker, newBrokerId);
+        topicSubscribers.computeIfPresent(topic, (t, subscribers) -> {
+            // Iterate over a copy of the map to prevent ConcurrentModificationException
+            Map<String, String> brokers = subscribers.getBrokers();
+            for (Map.Entry<String, String> entry : brokers.entrySet()) {
+                if (entry.getValue().equals(oldBrokerId)) {
+                    // Since TopicSubscriptions.addBroker uses putIfAbsent, we must remove first
+                    subscribers.removeBroker(entry.getKey());
+                    subscribers.addBroker(entry.getKey(), newBrokerId);
+                }
             }
-        }
+            return subscribers;
+        });
     }
 
     // ------------------------------------------------------------------
