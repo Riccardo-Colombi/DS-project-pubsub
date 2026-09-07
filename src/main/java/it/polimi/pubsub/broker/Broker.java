@@ -292,7 +292,6 @@ public class Broker {
 
                 wal.append(message);
 
-                // TODO: check if it is a right assumption
                 // Filtering the ACK out because they are not that relevant
                 if (message.getType() != MessageType.ACK) {
                     ConsoleAppender.asyncMessage(String.format("[Broker %s] Received %s (msgId: %s)",
@@ -385,7 +384,6 @@ public class Broker {
 
     public void updateHeartbeat(String senderId) {
 
-        // TODO: output message
         // System.out.println(this.BROKER_ID + " received heartbeat from " + senderId);
 
         ConnectionHandler handler = connectionRegistry.getConnectionHandler(senderId);
