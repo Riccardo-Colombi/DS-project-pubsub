@@ -221,12 +221,10 @@ public class Raft {
     public synchronized void becomeLeader() {
         state = new LeaderState(broker);
         currentLeaderId = BROKER_ID;
-        try {
-            // Automatically resolves the actual LAN IP of this machine
-            this.leaderHost = java.net.InetAddress.getLocalHost().getHostAddress();
-        } catch (Exception e) {
-            this.leaderHost = "127.0.0.1";
-        }
+
+        // Automatically resolves the actual LAN IP of this machine
+        this.leaderHost = resolveAdvertisedHost();
+
         this.leaderPort = BROKER_PORT;
         this.leaderClientPort = CLIENT_PORT;
 
@@ -557,11 +555,8 @@ public class Raft {
         this.currentTerm = 1;
         this.currentLeaderId = BROKER_ID;
 
-        try {
-            this.leaderHost = java.net.InetAddress.getLocalHost().getHostAddress();
-        } catch (Exception e) {
-            this.leaderHost = "127.0.0.1";
-        }
+        // Automatically resolves the actual LAN IP of this machine
+        this.leaderHost = resolveAdvertisedHost();
 
         this.leaderPort = BROKER_PORT;
         this.leaderClientPort = CLIENT_PORT;
@@ -628,15 +623,20 @@ public class Raft {
         this.currentLeaderId = msg.getSenderId();
         this.state = new FollowerState(broker);
 
-        this.leaderHost = msg.getLeaderHost();
+        BrokerHandler leaderHandler = connectionRegistry.getBrokerHandler(msg.getSenderId());
+        if (leaderHandler != null) leaderHandler.markAsClusterMember();
+
+        // Prefer the address of the socket we are actually connected on;
+        // fall back to the self-reported one only if that is unusable.
+        String observed = (leaderHandler != null) ? leaderHandler.getRemoteHost() : null;
+        this.leaderHost = isUsableHost(observed) ? observed : msg.getLeaderHost();
+
         this.leaderPort = msg.getLeaderPort();
         this.leaderClientPort = msg.getLeaderClientPort();
+
         this.votedFor = null;
         this.electionVotes = 0;
         this.lastLeaderHeartbeatMs = System.currentTimeMillis();
-
-        BrokerHandler leaderHandler = connectionRegistry.getBrokerHandler(msg.getSenderId());
-        if (leaderHandler != null) leaderHandler.markAsClusterMember();
 
         broker.getExecutor().submit(() -> {
             for (BrokerAddress peer : msg.getPeerAddresses()) {
@@ -655,6 +655,17 @@ public class Raft {
 
         ConsoleAppender.asyncMessage(String.format("[Raft %s] Joined cluster (term=%d, leader=%s)",
                 BROKER_ID, currentTerm, currentLeaderId));
+    }
+
+    private static boolean isUsableHost(String h) {
+        if (h == null || h.isBlank()) return false;
+
+        try {
+            java.net.InetAddress a = java.net.InetAddress.getByName(h);
+            return !a.isLoopbackAddress() && !a.isAnyLocalAddress();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public synchronized void restoreState(RaftMetadata metadata) {
@@ -693,6 +704,22 @@ public class Raft {
 
     public String getClusterId() {
         return clusterId;
+    }
+
+    // determine the IP address that a server or message broker should "advertise" to external clients so they know how to connect to it
+    private String resolveAdvertisedHost() {
+        String configured = System.getProperty("broker.advertisedHost");
+        if (configured != null && !configured.isBlank()) return configured;
+        try {
+            for (java.net.NetworkInterface ni : java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())) {
+                if (!ni.isUp() || ni.isLoopback() || ni.isVirtual()) continue;
+                for (java.net.InetAddress addr : java.util.Collections.list(ni.getInetAddresses())) {
+                    if (addr instanceof java.net.Inet4Address && addr.isSiteLocalAddress())
+                        return addr.getHostAddress();
+                }
+            }
+        } catch (Exception ignored) { }
+        return "127.0.0.1";
     }
 
     // Setters
