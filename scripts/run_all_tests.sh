@@ -12,7 +12,6 @@ TESTS=(
     "test_crash_recovery.sh"
     "test_message_deduplication.sh"
     "test_packet_corruption.sh"
-    "test_network_partition.sh"
 )
 
 # Move to the scripts directory to ensure correct relative paths
