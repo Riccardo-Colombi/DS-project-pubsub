@@ -58,7 +58,8 @@ public class InteractiveLauncher {
         Broker broker = new Broker(id, brokerPort, clientPort, walPath, offlinePath);
         broker.run();
 
-        ConsoleAppender.asyncMessage("Broker started. Commands: 'create', 'join <IP> <PORT>', or 'bridge <IP> <PORT>'");
+        ConsoleAppender.asyncMessage("Broker started. Commands: 'create', 'join <IP> <PORT>', " +
+                "'bridge <IP> <PORT>', 'crash', 'resurrect <IP> <PORT>'");
 
         while (true) {
             ConsoleAppender.printPrompt("Broker > ");
@@ -74,6 +75,19 @@ public class InteractiveLauncher {
                 String[] parts = cmd.split(" ");
                 broker.connectToPeer(parts[1], Integer.parseInt(parts[2]));
                 ConsoleAppender.asyncMessage(String.format("[Launcher] Bridge established with %s:%s", parts[1], parts[2]));
+            } else if ("crash".equals(cmd)) {
+                broker.crash();
+                ConsoleAppender.asyncMessage("[Launcher] Broker crashed. Network disconnected and state paused.");
+            } else if (cmd.startsWith("resurrect")) {
+                String[] parts = cmd.split(" ");
+                if (parts.length < 3) {
+                    ConsoleAppender.asyncMessage("[Launcher] Usage: resurrect <Peer IP> <Peer Broker Port>");
+                } else {
+                    broker.resurrect(parts[1], Integer.parseInt(parts[2]));
+                    ConsoleAppender.asyncMessage("[Launcher] Resurrect command issued.");
+                }
+            } else {
+                ConsoleAppender.asyncMessage("[Launcher] Unknown command.");
             }
         }
     }
