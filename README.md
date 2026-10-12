@@ -23,9 +23,9 @@
 [Durability](#durability-and-delivery-guarantees) ·
 [Quick start](#quick-start) ·
 [Chaos testing](#chaos-testing-with-tc-netem) ·
-[Known limits](#known-limits-and-roadmap)
-[Contributing](#contributing)
-[Authors](#authors)
+[Known limits](#known-limits-and-roadmap) ·
+[Contributing](#contributing) ·
+[Authors](#authors) ·
 [License](#license)
 
 </div>
