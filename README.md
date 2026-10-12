@@ -24,6 +24,9 @@
 [Quick start](#quick-start) ·
 [Chaos testing](#chaos-testing-with-tc-netem) ·
 [Known limits](#known-limits-and-roadmap)
+[Contributing](#contributing)
+[Authors](#authors)
+[License](#license)
 
 </div>
 
@@ -399,10 +402,20 @@ This project started as a university assignment; these are the open issues, orde
 2. Reproduce the issue with `docker compose` + `tc netem`
 3. Open a pull request describing the scenario, before/after logs, and observed terms
 
+## Authors
+
+This project was developed and is maintained by:
+
+- **[Alessandro Boglioli](https://github.com/AlessandroBoglioli)**
+- **[Riccardo Colombi](https://github.com/Riccardo-Colombi)**
+- **[Matteo Galimberti](https://github.com/Galimba03)**
+
 ## License
 
-Academic project, Politecnico di Milano. Add your preferred license here (e.g., MIT).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Academic project, Politecnico di Milano.
 
 <div align="center">
-<sub>built with Java, Raft and a lot of <code>tc qdisc del dev eth0 root</code></sub>
+<sub>built with ☕, Raft consensus, and a trauma-inducing amount of <code>tc netem loss 100%</code> 💥</sub>
 </div>
