@@ -51,6 +51,10 @@ public class CandidateState implements BrokerState {
                 broker.handleRequestVote((RequestVoteMessage) message);
                 break;
 
+            case INSTALL_SNAPSHOT:
+                broker.dispatchMessage(message);
+                break;
+
             default:
                 // Silently drops messages
                 break;

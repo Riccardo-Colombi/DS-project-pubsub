@@ -85,9 +85,11 @@ public class FollowerState implements BrokerState {
                 broker.handleJoinClusterRequest((JoinClusterMessage) message);
                 break;
 
+            case INSTALL_SNAPSHOT:
+                broker.dispatchMessage(message);
+                break;
+
             default:
-                // TODO: Check install snapshot problem
-                // broker.dispatchMessage(message);
                 break;
         }
     }

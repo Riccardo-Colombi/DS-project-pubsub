@@ -2,11 +2,14 @@ package it.polimi.pubsub.broker.states;
 
 import it.polimi.pubsub.broker.Broker;
 import it.polimi.pubsub.messages.HeartbeatMessage;
+import it.polimi.pubsub.messages.brokerMessages.InstallSnapshotMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
 
 import static org.mockito.Mockito.*;
 
@@ -40,5 +43,15 @@ public class FollowerStateTest {
         verify(broker, times(1)).updateHeartbeat("broker1");
         verify(broker, times(1)).updateLeaderHeartbeat();
         verify(broker, times(1)).updateLeaderClientPort(8080);
+    }
+
+    @Test
+    public void testInstallSnapshotIsDispatchedNotDropped() throws Exception {
+        InstallSnapshotMessage snapshot = new InstallSnapshotMessage(
+                "broker1", 1, System.currentTimeMillis(), 3, 10, 3, List.of());
+
+        followerState.onMessageReceived(snapshot);
+
+        verify(broker, times(1)).dispatchMessage(snapshot);
     }
 }

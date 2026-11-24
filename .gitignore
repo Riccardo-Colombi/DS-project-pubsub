@@ -37,3 +37,7 @@ build/
 ### Mac OS ###
 .DS_Store
 Thumbs.dbz
+
+### Claude ###
+CLAUDE.md
+.claude
